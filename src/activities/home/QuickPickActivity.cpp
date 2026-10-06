@@ -123,12 +123,11 @@ void dimText(const GfxRenderer& renderer, const int x, const int y, const int fo
 void drawProjectTitleRow(const GfxRenderer& renderer, const int textY, const int pillY, const int pillHeight,
                          const int width, const int sidePadding, const int gap, const std::vector<const char*>& names,
                          const size_t selected, const bool focused) {
-  // The row starts at the content edge, the same place the tab bar's first tab pill
-  // does, so the first entry's pill (when shown) sits exactly over the tab pill's spot
-  // and its *text* -- PROJECT_PILL_PADDING in -- lines up with the first tab's text and
-  // the task rows' text below (see renderTasksTab()). It ends the same distance in from
-  // the right edge.
-  const int left = sidePadding;
+  // The row starts PROJECT_PILL_PADDING left of the content edge, so the first entry's
+  // *text* begins exactly where the tab bar's first tab pill begins (the content edge);
+  // the entry's own pill, when shown, is what extends into the margin. It ends the same
+  // distance in from the right edge.
+  const int left = sidePadding - PROJECT_PILL_PADDING;
   const int available = width - left * 2;
   const auto slotWidthOf = [&](const size_t i) {
     return renderer.getTextWidth(UI_12_FONT_ID, names[i],
