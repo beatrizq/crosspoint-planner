@@ -20,12 +20,16 @@ namespace {
 // is sized for a full title band this screen does not draw, so the layout below
 // uses the height of just the clock/battery row.
 constexpr int STATUS_BAR_HEIGHT = 36;
-// Between the status bar and the first tile.
-constexpr int STATUS_BAR_GAP = 10;
 
-// The tile artwork: the source bitmaps are 80x80, drawn at up to this size.
+// The tile artwork: the source bitmaps are 80x80, drawn at up to this size (70% of
+// the 160px they were first drawn at), and never smaller than MIN_ICON_SIZE even when
+// the band above takes a lot of room.
 constexpr int SOURCE_ICON_SIZE = 80;
-constexpr int MAX_ICON_SIZE = 160;
+constexpr int MAX_ICON_SIZE = 112;
+constexpr int MIN_ICON_SIZE = 64;
+// The least space left above, between and below the two options before the icons
+// shrink to make more.
+constexpr int MIN_GAP = 8;
 // The label sits this far under its icon, and the selection outline stands this
 // far (times 4 on the sides, as the old home grid did) clear of the pair.
 constexpr int LABEL_GAP = 12;
@@ -71,7 +75,9 @@ void drawScaledIcon(const GfxRenderer& renderer, const uint8_t* bitmap, const in
 
 void MainMenuActivity::onEnter() {
   Activity::onEnter();
-  focus = Stop::Read;
+  // Back on the tile of the area just left: the Planner screen's Home puts focus on
+  // the Planner, the Reader's on the Reader (see setReturnArea()).
+  focus = returnArea == HomeArea::Planner ? Stop::Planner : Stop::Read;
   bandStop = StatusBand::Stop::StatusBar;
   band.poll();
   settingsPressSeen = false;
@@ -81,11 +87,25 @@ void MainMenuActivity::onEnter() {
 
 MainMenuActivity::TileLayout MainMenuActivity::tileLayout() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  // Below the band as it was last drawn: the status bar, plus whatever calendar rows
-  // and alert are showing.
-  const int top = band.bottom(renderer) + STATUS_BAR_GAP;
+  // From just below the band as it was last drawn (the status bar, plus whatever
+  // calendar rows and alert are showing) down to the front-button labels.
+  const int top = band.bottom(renderer);
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.buttonHintsGap;
-  return TileLayout{top, std::max(0, (bottom - top) / 2)};
+  const int available = bottom - top;
+
+  // Everything in an option's box except its icon: the label under it and the padding
+  // around both.
+  const int chrome = LABEL_GAP + renderer.getLineHeight(UI_12_FONT_ID) + 2 * SELECTION_PADDING;
+  // As large as the artwork goes while two boxes and three gaps of at least MIN_GAP
+  // still fit.
+  const int fitIcon = (available - 3 * MIN_GAP) / 2 - chrome;
+  const int iconSize = std::max(MIN_ICON_SIZE, std::min(MAX_ICON_SIZE, fitIcon));
+  const int boxHeight = iconSize + chrome;
+
+  // Three equal gaps: above the first box, between the two, below the second.
+  const int gap = std::max(0, (available - 2 * boxHeight) / 3);
+  const int firstBoxTop = top + gap;
+  return TileLayout{iconSize, boxHeight, gap, firstBoxTop, firstBoxTop + boxHeight + gap};
 }
 
 void MainMenuActivity::activateFocused() {
@@ -154,15 +174,17 @@ void MainMenuActivity::loop() {
     return;
   }
 
-  // A tap on a tile selects and opens it.
+  // A tap on an option selects and opens it. Each option's tap area is its box plus
+  // half the gap on either side, so the two meet in the middle of the gap between them.
   const TileLayout layout = tileLayout();
   const int width = renderer.getScreenWidth();
-  if (mappedInput.wasTapInRect(0, layout.top, width, layout.height)) {
+  const int halfGap = layout.gap / 2;
+  if (mappedInput.wasTapInRect(0, layout.firstBoxTop - halfGap, width, layout.boxHeight + 2 * halfGap)) {
     focus = Stop::Read;
     activateFocused();
     return;
   }
-  if (mappedInput.wasTapInRect(0, layout.top + layout.height, width, layout.height)) {
+  if (mappedInput.wasTapInRect(0, layout.secondBoxTop - halfGap, width, layout.boxHeight + 2 * halfGap)) {
     focus = Stop::Planner;
     activateFocused();
     return;
@@ -192,10 +214,7 @@ void MainMenuActivity::render(RenderLock&&) {
 
   const TileLayout layout = tileLayout();
   const int labelHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  // As large as the artwork goes, but never so large the icon, its label and the
-  // selection outline around both do not fit the tile's band.
-  const int fitIconSize = layout.height - LABEL_GAP - labelHeight - SELECTION_PADDING * 4;
-  const int iconSize = std::max(SOURCE_ICON_SIZE, std::min(MAX_ICON_SIZE, fitIconSize));
+  const int iconSize = layout.iconSize;
 
   struct Tile {
     Stop stop;
@@ -213,17 +232,17 @@ void MainMenuActivity::render(RenderLock&&) {
     const std::string label = renderer.truncatedText(UI_12_FONT_ID, tiles[i].label, pageWidth - 32, style);
     const int labelWidth = renderer.getTextWidth(UI_12_FONT_ID, label.c_str(), style);
 
-    // The icon and its label, centred together in the tile's band.
+    // The icon and its label, inside the option's box.
     const int contentHeight = iconSize + LABEL_GAP + labelHeight;
-    const int contentTop = layout.top + i * layout.height + (layout.height - contentHeight) / 2;
+    const int boxTop = i == 0 ? layout.firstBoxTop : layout.secondBoxTop;
+    const int contentTop = boxTop + SELECTION_PADDING;
 
     if (selected) {
       // An outline, not a fill: the artwork is line work, and inverting a tile
       // this size is a lot of ink to move on every selection change.
       const int boxWidth = std::max(iconSize, labelWidth) + SELECTION_PADDING * 4;
-      const int boxHeight = contentHeight + SELECTION_PADDING * 2;
-      renderer.drawRoundedRect((pageWidth - boxWidth) / 2, contentTop - SELECTION_PADDING, boxWidth, boxHeight,
-                               SELECTION_LINE_WIDTH, SELECTION_CORNER_RADIUS, true);
+      renderer.drawRoundedRect((pageWidth - boxWidth) / 2, boxTop, boxWidth, layout.boxHeight, SELECTION_LINE_WIDTH,
+                               SELECTION_CORNER_RADIUS, true);
     }
 
     drawScaledIcon(renderer, tiles[i].icon, (pageWidth - iconSize) / 2, contentTop, iconSize);

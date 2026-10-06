@@ -18,6 +18,7 @@
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
+#include "activities/home/MainMenuActivity.h"
 #include "activities/planner/PlannerLabels.h"
 #include "activities/planner/RescheduleTaskActivity.h"
 #include "activities/util/ConfirmationActivity.h"
@@ -71,15 +72,13 @@ constexpr int SECTION_TITLE_PAD = 14;
 constexpr int PROJECT_PILL_PADDING = 8;
 constexpr int PROJECT_PILL_RADIUS = 6;
 
-// Right1 means "go Home" on every other screen, but the instant you land
-// here (this screen IS Home) it means "open Tasks" instead, since onEnter()
-// always lands focus on the tab bar with Tasks active. A reflexive second
-// press of the same physical button right after arriving -- e.g. pressing it
-// again because the e-ink refresh did not yet visibly confirm the first
-// press landed -- would otherwise drill straight into Tasks unasked. Any
-// Right1 release within this window of onEnter() is ignored rather than
-// acted on; long enough to absorb a reflexive double-press, short enough
-// that a deliberate press still feels immediate.
+// onEnter() lands focus on the title row's first entry, where Right1 means "go Home".
+// A reflexive second press of the same physical button right after arriving -- e.g.
+// pressing it again because the e-ink refresh did not yet visibly confirm the first
+// press landed -- would otherwise bounce straight back out to the main screen unasked.
+// Any Right1 release within this window of onEnter() is ignored rather than acted on;
+// long enough to absorb a reflexive double-press, short enough that a deliberate press
+// still feels immediate.
 constexpr unsigned long RIGHT1_ENTRY_GRACE_MS = 500;
 
 // Same dither-overlay technique as PlannerScreenActivity::dimText() (and
@@ -124,11 +123,12 @@ void dimText(const GfxRenderer& renderer, const int x, const int y, const int fo
 void drawProjectTitleRow(const GfxRenderer& renderer, const int textY, const int pillY, const int pillHeight,
                          const int width, const int sidePadding, const int gap, const std::vector<const char*>& names,
                          const size_t selected, const bool focused) {
-  // The row starts PROJECT_PILL_PADDING left of the content edge, so the first
-  // entry's *text* lines up with the task rows' text below (the pill, when shown,
-  // is what extends into the margin), and ends the same distance in from the
-  // right edge.
-  const int left = sidePadding - PROJECT_PILL_PADDING;
+  // The row starts at the content edge, the same place the tab bar's first tab pill
+  // does, so the first entry's pill (when shown) sits exactly over the tab pill's spot
+  // and its *text* -- PROJECT_PILL_PADDING in -- lines up with the first tab's text and
+  // the task rows' text below (see renderTasksTab()). It ends the same distance in from
+  // the right edge.
+  const int left = sidePadding;
   const int available = width - left * 2;
   const auto slotWidthOf = [&](const size_t i) {
     return renderer.getTextWidth(UI_12_FONT_ID, names[i],
@@ -207,6 +207,9 @@ int taskRowSubtitleFontId() {
 
 void QuickPickActivity::onEnter() {
   Activity::onEnter();
+  // Home from here (and from the Calendar and Alerts screens opened from here) lands
+  // back on the Planner tile.
+  MainMenuActivity::setReturnArea(HomeArea::Planner);
   // Re-reads the glance strip's own Calendar source from disk, the same
   // "hydrate on entry" PlannerScreenActivity::onEnter() -> loadCaches()
   // already does for Calendar (CalendarActivity's own loadCaches() override)
@@ -236,14 +239,10 @@ void QuickPickActivity::onEnter() {
   projectEntries.clear();
   rebuildProjectEntries();
   selectProject(0);
-  // Lands focused on the tab bar (the first tab already active), not the
-  // companion figure or a row -- the tab bar is always reachable regardless
-  // of whether the active tab has any rows (see tabBarFocused's own
-  // comment), so this is always a real, visible highlight to land on. On a
-  // Logs-only list (no projects at all) there is no tab bar, so that is the
-  // title row instead.
-  focus = Focus::Embedded;
-  if (onLogsEntry()) focusEmbeddedFirst();
+  // Lands focused on the title row, on its first entry (selectProject(0) above) --
+  // always there, whatever the section below it holds. The first entry is always a
+  // project (or the generic Tasks group), never Logs, which is last.
+  focus = Focus::Projects;
   band.setIncludeSyncHint(true);
   band.poll();
   enteredAtMs = millis();
@@ -703,7 +702,14 @@ void QuickPickActivity::loop() {
 #endif
         break;
       case Focus::Projects:
-        stepProject(-1);
+        // On the first entry there is nothing before it to step back to, so Right1
+        // is "« Home" there (labelled so, see render()); from any other entry it
+        // steps to the previous one.
+        if (projectIndex == 0) {
+          activityManager.goHome();
+        } else {
+          stepProject(-1);
+        }
         break;
       case Focus::Embedded:
         if (!tabBarFocused) {
@@ -897,8 +903,11 @@ void QuickPickActivity::loop() {
 void QuickPickActivity::renderTasksTab(const int top, const int height) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
-  const int textX = metrics.contentSidePadding;
-  const int textWidth = pageWidth - metrics.contentSidePadding * 2;
+  // The rows' text starts where the first tab's *text* does -- the tab pill's inset
+  // (PROJECT_PILL_PADDING mirrors LyraTheme::drawTabBar()'s hPaddingInSelection) in
+  // from the content edge -- not at the pill's own left edge.
+  const int textX = metrics.contentSidePadding + PROJECT_PILL_PADDING;
+  const int textWidth = pageWidth - textX - metrics.contentSidePadding;
   const bool rowsFocused = focus == Focus::Embedded && !tabBarFocused;
 
   const int totalRows = taskTabModel::countFor(activeKind, currentScope());
@@ -1249,10 +1258,11 @@ void QuickPickActivity::render(RenderLock&&) {
       break;
     case Focus::Projects:
       // Previous / next entry, labelled with where a press would land -- the
-      // same preview the tab bar's Right2 gives for the next tab.
+      // same preview the tab bar's Right2 gives for the next tab. On the first
+      // entry Right1 has nothing to step back to and goes Home instead.
       if (projectEntries.size() > 1) {
         const size_t count = projectEntries.size();
-        backLabel = projectEntries[(projectIndex + count - 1) % count].name.c_str();
+        backLabel = projectIndex == 0 ? tr(STR_HOME) : projectEntries[projectIndex - 1].name.c_str();
         confirmLabel = projectEntries[(projectIndex + 1) % count].name.c_str();
       }
       break;

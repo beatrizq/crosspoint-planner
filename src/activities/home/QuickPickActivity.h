@@ -109,10 +109,11 @@
  *     while the companion is hidden.
  *   - Title row (the Todoist projects, then Logs): while focused the selected
  *     entry sits in the same rounded black pill a selected tab does; unfocused
- *     it is just bold. Right1/Right2 step to the previous/next entry,
- *     wrapping, and are labelled with where they would land; the selected
- *     entry is drawn bold. Selecting one reloads the section below it on its
- *     first tab.
+ *     it is just bold. Right2 steps to the next entry (wrapping) and Right1 to
+ *     the previous one, both labelled with where they would land -- except on
+ *     the first entry, where Right1 is "« Home" and goes to the main screen. The
+ *     selected entry is drawn bold. Selecting one reloads the section below it on
+ *     its first tab. (The side Up/Down buttons still wrap around.)
  *   - Embedded section: the tab bar
  *     itself (see tabBarFocused's own comment) is always the first stop --
  *     "the start of the section" -- reachable regardless of whether the

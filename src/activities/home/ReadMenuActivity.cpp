@@ -9,6 +9,7 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "activities/home/MainMenuActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/HomeAppOrder.h"
@@ -16,6 +17,8 @@
 
 void ReadMenuActivity::onEnter() {
   Activity::onEnter();
+  // Home from here (and from the screens under it) lands back on the Reader tile.
+  MainMenuActivity::setReturnArea(HomeArea::Reader);
   buildEntries();
   recentBooks = recentBookLoader::load(1);
   selectedIndex = 0;
