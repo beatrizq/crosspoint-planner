@@ -408,7 +408,7 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   // Tappable back button leading the band on touch boards, so every pushed
   // screen offers a visible way out beside the edge-swipe gesture. This frame
   // registers no hit rects, so the rect is recorded in HeaderBackTapTarget and
-  // MappedInputManager folds taps on it into Button::Back. Same geometry as
+  // MappedInputManager folds taps on it into Button::Right1. Same geometry as
   // the FUI header's leading slot (applyHeaderStatus set the size/offset) so
   // the recorded rect matches the drawn button.
   const int16_t backBtnSize = props.leadingSize;

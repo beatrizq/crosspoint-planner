@@ -376,7 +376,7 @@ void CrossPointWebServerActivity::loop() {
           mappedInput.update(true);
           // Home remains available now; other configured actions are deferred
           // to the next main-loop pass.
-          if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
+          if (mappedInput.wasReleased(MappedInputManager::Button::Right1) || mappedInput.wasHomeGesture()) {
             onGoHome();
             return;
           }
@@ -386,7 +386,7 @@ void CrossPointWebServerActivity::loop() {
     }
 
     // Also check outside the request-processing loop.
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back) || mappedInput.wasHomeGesture()) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right1) || mappedInput.wasHomeGesture()) {
       onGoHome();
       return;
     }

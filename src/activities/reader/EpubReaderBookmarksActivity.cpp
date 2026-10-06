@@ -128,12 +128,12 @@ bool EpubReaderBookmarksActivity::handleCustomInput() {
 }
 
 bool EpubReaderBookmarksActivity::handleButtons() {
-  if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, ENTER_ACTIONS_MODE_MS)) {
+  if (mappedInput.wasLongPressed(MappedInputManager::Button::Right2, ENTER_ACTIONS_MODE_MS)) {
     showBookmarkActions();
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
@@ -141,7 +141,7 @@ bool EpubReaderBookmarksActivity::handleButtons() {
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     openSelectedBookmark();
     return true;
   }

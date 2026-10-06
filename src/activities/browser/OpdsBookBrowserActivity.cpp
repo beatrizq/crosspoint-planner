@@ -128,7 +128,7 @@ void OpdsBookBrowserActivity::loop() {
   if (state == BrowserState::ERROR) {
     int tx = 0;
     int ty = 0;
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(tx, ty)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right2) || mappedInput.wasScreenTapped(tx, ty)) {
       if (WiFi.status() == WL_CONNECTED && WiFi.localIP() != IPAddress(0, 0, 0, 0)) {
         state = BrowserState::LOADING;
         statusMessage = tr(STR_LOADING);
@@ -137,14 +137,14 @@ void OpdsBookBrowserActivity::loop() {
       } else {
         launchWifiSelection();
       }
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
       navigateBack();
     }
     return;
   }
 
   if (state == BrowserState::CHECK_WIFI || state == BrowserState::LOADING) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
       state == BrowserState::CHECK_WIFI ? onGoHome() : navigateBack();
     }
     return;
@@ -153,11 +153,11 @@ void OpdsBookBrowserActivity::loop() {
   if (state == BrowserState::DOWNLOADING) return;
 
   if (state == BrowserState::BROWSING) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
       activateSelected();
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
       navigateBack();
-    } else if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    } else if (mappedInput.wasReleased(MappedInputManager::Button::Left1)) {
       if (!searchTemplate.empty() && selectorIndex == 0) launchSearch();
     }
 
@@ -560,7 +560,7 @@ void OpdsBookBrowserActivity::downloadBook(const OpdsEntry& book) {
         // The activity loop is blocked for the whole download; pump input here
         // so the Cancel button or a Back press can abort mid-transfer.
         mappedInput.update(true);
-        if (mappedInput.wasReleased(MappedInputManager::Button::Back)) cancelDownload = true;
+        if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) cancelDownload = true;
         // Home cancels immediately; other configured actions are deferred to
         // the next main-loop pass by the transfer input pump.
         if (mappedInput.wasHomeGesture()) {

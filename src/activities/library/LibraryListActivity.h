@@ -93,7 +93,7 @@ class LibraryListActivity final : public UiTabListActivity {
   // Sub-screens act on button press, so a button still held when we resume must
   // not also act here. Records what to swallow on the next release.
   void swallowHeldReleases();
-  // Staged back-out shared by Button::Back and the header back arrow.
+  // Staged back-out shared by Button::Right1 and the header back arrow.
   void handleBackAction();
   static void searchActionTrampoline(const freeink::ui::ActionEvent& event, void* user);
   static void rebuildActionTrampoline(const freeink::ui::ActionEvent& event, void* user);

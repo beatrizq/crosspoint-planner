@@ -424,13 +424,13 @@ Constraint: Physical button positions are fixed on hardware, but their logical f
 
 2. **User Remappable** (Front buttons):
    
-   - `Button::Back` → Maps to `SETTINGS.frontButtonBack` (hardware index)
+   - `Button::Right1` → Maps to `SETTINGS.frontButtonRight1` (hardware index)
    
-   - `Button::Confirm` → Maps to `SETTINGS.frontButtonConfirm`
+   - `Button::Right2` → Maps to `SETTINGS.frontButtonRight2`
    
-   - `Button::Left` → Maps to `SETTINGS.frontButtonLeft`
+   - `Button::Left1` → Maps to `SETTINGS.frontButtonLeft1`
    
-   - `Button::Right` → Maps to `SETTINGS.frontButtonRight`
+   - `Button::Left2` → Maps to `SETTINGS.frontButtonLeft2`
 
 3. **Reader-Specific** (Page navigation with optional swap):
    
@@ -440,7 +440,7 @@ Constraint: Physical button positions are fixed on hardware, but their logical f
 
 **Implementation**:
 
-- Activities use **logical buttons** (e.g., `Button::Confirm`)
+- Activities use **logical buttons** (e.g., `Button::Right2`)
 - `MappedInputManager` translates to **physical hardware buttons**
 - User can remap front buttons in settings
 - Orientation changes handled separately by renderer coordinate transforms

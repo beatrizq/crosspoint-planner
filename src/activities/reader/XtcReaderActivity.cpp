@@ -50,7 +50,7 @@ bool XtcReaderActivity::handleFormatInput() {
   }
 
   // Enter chapter selection activity on Confirm release or touch menu gesture
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2) ||
       ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {
     openChapterSelection();
     return true;

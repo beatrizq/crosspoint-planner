@@ -14,10 +14,10 @@ enum class ScreenEdge : uint8_t;
 class MappedInputManager {
  public:
   enum class Button {
-    Back,
-    Confirm,
-    Left,
-    Right,
+    Right1,
+    Right2,
+    Left1,
+    Left2,
     Up,
     Down,
     Power,

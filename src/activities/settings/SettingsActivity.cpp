@@ -247,7 +247,7 @@ void SettingsActivity::stepTab(const int direction) {
 }
 
 bool SettingsActivity::handleButtons() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (ringPos() == 0) {
       stepTab(1);
     } else {
@@ -257,7 +257,7 @@ bool SettingsActivity::handleButtons() {
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     if (ringPos() > 0) {
       activeNav().selected = 0;
       requestUpdate();

@@ -187,12 +187,12 @@ bool TextSettingsActivity::handleCustomInput() {
 }
 
 bool TextSettingsActivity::handleButtons() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     finish();
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (ringPos() == 0) {
       switchTab();
     } else {

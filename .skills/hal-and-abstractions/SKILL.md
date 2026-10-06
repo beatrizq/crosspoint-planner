@@ -22,7 +22,7 @@ This is when and how to route through them, and where to draw a new boundary.
   literals; ask the renderer for width/height and use the oriented viewable
   area.
 - **Input in activities:** `MappedInputManager::Button` logical enums
-  (`Button::Confirm`, `Button::PageForward`, ...). Never raw `HalGPIO::BTN_*`
+  (`Button::Right2`, `Button::PageForward`, ...). Never raw `HalGPIO::BTN_*`
   indices outside `ButtonRemapActivity`. Logical buttons survive user remapping
   and orientation; raw indices do not.
 - **Shared state:** the singleton macros (`SETTINGS`, `APP_STATE`, `GUI`,

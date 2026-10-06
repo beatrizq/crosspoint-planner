@@ -50,10 +50,10 @@ bool MappedInputManager::isNavDirectionSwapped() const {
 MappedInputManager::Button MappedInputManager::mapScreenDirection(const Button button) const {
   // Rows follow GfxRenderer::Orientation's declared order.
   static constexpr Button directions[][4] = {
-      {Button::Left, Button::Right, Button::Up, Button::Down},
-      {Button::Down, Button::Up, Button::Left, Button::Right},
-      {Button::Right, Button::Left, Button::Down, Button::Up},
-      {Button::Up, Button::Down, Button::Right, Button::Left},
+      {Button::Left1, Button::Left2, Button::Up, Button::Down},
+      {Button::Down, Button::Up, Button::Left1, Button::Left2},
+      {Button::Left2, Button::Left1, Button::Down, Button::Up},
+      {Button::Up, Button::Down, Button::Left2, Button::Left1},
   };
 
   uint8_t direction = 0;
@@ -83,18 +83,18 @@ bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint
   const auto sideLayout = SETTINGS.sideButtonLayout;
 
   switch (button) {
-    case Button::Back:
+    case Button::Right1:
       // Logical Back maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonBack);
-    case Button::Confirm:
+      return (gpio.*fn)(SETTINGS.frontButtonRight1);
+    case Button::Right2:
       // Logical Confirm maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonConfirm);
-    case Button::Left:
+      return (gpio.*fn)(SETTINGS.frontButtonRight2);
+    case Button::Left1:
       // Logical Left maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonLeft);
-    case Button::Right:
+      return (gpio.*fn)(SETTINGS.frontButtonLeft1);
+    case Button::Left2:
       // Logical Right maps to user-configured front button.
-      return (gpio.*fn)(SETTINGS.frontButtonRight);
+      return (gpio.*fn)(SETTINGS.frontButtonLeft2);
     case Button::Up:
       // Side buttons remain fixed for Up/Down.
       return (gpio.*fn)(HalGPIO::BTN_UP);
@@ -135,12 +135,12 @@ bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint
     case Button::NavNext:
       // Logical "next item" navigation: side Down + front Right, with the control axis flipped in
       // INVERTED / LANDSCAPE_CCW under the live orientation policy, matching the rotated hint labels.
-      return isNavDirectionSwapped() ? (mapButton(Button::Up, fn) || mapButton(Button::Left, fn))
-                                     : (mapButton(Button::Down, fn) || mapButton(Button::Right, fn));
+      return isNavDirectionSwapped() ? (mapButton(Button::Up, fn) || mapButton(Button::Left1, fn))
+                                     : (mapButton(Button::Down, fn) || mapButton(Button::Left2, fn));
     case Button::NavPrevious:
       // Logical "previous item" navigation: side Up + front Left, axis-flipped in the same orientations.
-      return isNavDirectionSwapped() ? (mapButton(Button::Down, fn) || mapButton(Button::Right, fn))
-                                     : (mapButton(Button::Up, fn) || mapButton(Button::Left, fn));
+      return isNavDirectionSwapped() ? (mapButton(Button::Down, fn) || mapButton(Button::Left2, fn))
+                                     : (mapButton(Button::Up, fn) || mapButton(Button::Left1, fn));
     case Button::ScreenLeft:
     case Button::ScreenRight:
     case Button::ScreenUp:
@@ -296,7 +296,7 @@ bool MappedInputManager::wasEdgeSwipe(const freeink::ui::ScreenEdge edge) const 
 
 bool MappedInputManager::wasBackGesture() const {
   // Tap on the header back button (rect recorded by BaseTheme::drawHeader;
-  // empty on screens without one). Folded into Button::Back alongside the
+  // empty on screens without one). Folded into Button::Right1 alongside the
   // swipe so every activity's existing Back handling picks it up.
   int tapX = 0;
   int tapY = 0;
@@ -339,19 +339,19 @@ bool MappedInputManager::wasPowerConfirmClick() const {
 #endif
 
 bool MappedInputManager::wasPressed(const Button button) const {
-  if (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) return true;
-  if (button == Button::Back && wasBackGesture()) return true;
+  if (button == Button::Right2 && homeAction == HomeButtonAction::Confirm) return true;
+  if (button == Button::Right1 && wasBackGesture()) return true;
 #if FREEINK_CAP_TOUCH
-  if (button == Button::Confirm && wasPowerConfirmClick()) return true;
+  if (button == Button::Right2 && wasPowerConfirmClick()) return true;
 #endif
   return mapButton(button, &HalGPIO::wasPressed);
 }
 
 bool MappedInputManager::wasReleased(const Button button) const {
-  if (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) return true;
-  if (button == Button::Back && wasBackGesture()) return true;
+  if (button == Button::Right2 && homeAction == HomeButtonAction::Confirm) return true;
+  if (button == Button::Right1 && wasBackGesture()) return true;
 #if FREEINK_CAP_TOUCH
-  if (button == Button::Confirm && wasPowerConfirmClick()) return true;
+  if (button == Button::Right2 && wasPowerConfirmClick()) return true;
 #endif
   return mapButton(button, &HalGPIO::wasReleased);
 }
@@ -418,7 +418,7 @@ MappedInputManager::Labels MappedInputManager::mapDirectionalLabels(const char* 
     if (mapScreenDirection(Button::ScreenDown) == rawButton) return down;
     return "";
   };
-  return mapFrontLabels(back, confirm, labelForButton(Button::Left), labelForButton(Button::Right));
+  return mapFrontLabels(back, confirm, labelForButton(Button::Left1), labelForButton(Button::Left2));
 }
 
 MappedInputManager::Labels MappedInputManager::mapFrontLabels(const char* back, const char* confirm, const char* left,
@@ -426,16 +426,16 @@ MappedInputManager::Labels MappedInputManager::mapFrontLabels(const char* back, 
   // Build the label order based on the configured hardware mapping.
   auto labelForHardware = [&](uint8_t hw) -> const char* {
     // Compare against configured logical roles and return the matching label.
-    if (hw == SETTINGS.frontButtonBack) {
+    if (hw == SETTINGS.frontButtonRight1) {
       return back;
     }
-    if (hw == SETTINGS.frontButtonConfirm) {
+    if (hw == SETTINGS.frontButtonRight2) {
       return confirm;
     }
-    if (hw == SETTINGS.frontButtonLeft) {
+    if (hw == SETTINGS.frontButtonLeft1) {
       return left;
     }
-    if (hw == SETTINGS.frontButtonRight) {
+    if (hw == SETTINGS.frontButtonLeft2) {
       return right;
     }
     return "";

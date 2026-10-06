@@ -71,7 +71,7 @@ void XtcReaderChapterSelectionActivity::activateIndex(const int index) {
 }
 
 bool XtcReaderChapterSelectionActivity::handleButtons() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
@@ -83,7 +83,7 @@ bool XtcReaderChapterSelectionActivity::handleButtons() {
     return true;  // no book: nothing else to route this pass
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     activateIndex(nav.selected);
     return true;
   }

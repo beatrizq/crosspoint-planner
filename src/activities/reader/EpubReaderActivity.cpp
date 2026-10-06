@@ -502,8 +502,8 @@ void EpubReaderActivity::loop() {
   }
 
   if (automaticPageTurnActive) {
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm) ||
-        mappedInput.wasReleased(MappedInputManager::Button::Back) ||
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right2) ||
+        mappedInput.wasReleased(MappedInputManager::Button::Right1) ||
         ReaderUtils::isTouchMenuGesture(renderer, mappedInput)) {
       automaticPageTurnActive = false;
       requestUpdate();
@@ -541,8 +541,8 @@ void EpubReaderActivity::loop() {
   // wasLongPressed() suppresses the release that follows it, so leave it unpolled while
   // the end-of-book menu owns Confirm -- otherwise the menu never sees that release.
   const bool confirmLongPressed = !endOfBookMenuOpen && confirmHoldMs != 0 &&
-                                  mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, confirmHoldMs);
-  const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Confirm);
+                                  mappedInput.wasLongPressed(MappedInputManager::Button::Right2, confirmHoldMs);
+  const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Right2);
   if (confirmLongPressed) {
     switch (SETTINGS.longPressMenuFunction) {
       case CrossPointSettings::LP_MENU_BOOKMARK:
@@ -618,7 +618,7 @@ void EpubReaderActivity::loop() {
     }
   }
 
-  if (footnoteDepth > 0 && mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+  if (footnoteDepth > 0 && mappedInput.wasReleased(MappedInputManager::Button::Right1) &&
       mappedInput.getHeldTime() < ReaderUtils::GO_BACK_OR_HOME_MS) {
     restoreSavedPosition();
     return;
@@ -2195,23 +2195,23 @@ void EpubReaderActivity::handleOverlayInput() {
     }
     if (routed.routed) return;  // a touch frame the chrome consumed (or dead space)
 
-    if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
       closeOverlayToPage();
       return;
     }
-    if (mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Left1)) {
       focusedTool = (focusedTool + 2) % 3;
       panelCursorShown = true;
       fastRedraw();
       return;
     }
-    if (mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Left2)) {
       focusedTool = (focusedTool + 1) % 3;
       panelCursorShown = true;
       fastRedraw();
       return;
     }
-    if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
       openOverlay(toolOverlay(focusedTool));
       return;
     }
@@ -2354,12 +2354,12 @@ void EpubReaderActivity::handleOverlayInput() {
   }
   if (routed.routed) return;  // consumed by the chrome (title band, dead space)
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     dismissPanel();
     return;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     activateRow();
     return;
   }
@@ -2371,9 +2371,9 @@ void EpubReaderActivity::handleOverlayInput() {
   // so it never doubles up with the tap step.
   if (count > 0) {
     const bool up = mappedInput.isPressed(MappedInputManager::Button::Up) ||
-                    mappedInput.isPressed(MappedInputManager::Button::Left);
+                    mappedInput.isPressed(MappedInputManager::Button::Left1);
     const bool down = mappedInput.isPressed(MappedInputManager::Button::Down) ||
-                      mappedInput.isPressed(MappedInputManager::Button::Right);
+                      mappedInput.isPressed(MappedInputManager::Button::Left2);
     if (!panelHoldJumped && (up || down) && mappedInput.getHeldTime() >= PANEL_HOLD_MS) {
       const int step = down ? PANEL_HOLD_STEP : -PANEL_HOLD_STEP;
       panelIndex = std::clamp(panelIndex + step, 0, count - 1);
@@ -2384,9 +2384,9 @@ void EpubReaderActivity::handleOverlayInput() {
     }
 
     const bool releasedUp = mappedInput.wasReleased(MappedInputManager::Button::Up) ||
-                            mappedInput.wasReleased(MappedInputManager::Button::Left);
+                            mappedInput.wasReleased(MappedInputManager::Button::Left1);
     const bool releasedDown = mappedInput.wasReleased(MappedInputManager::Button::Down) ||
-                              mappedInput.wasReleased(MappedInputManager::Button::Right);
+                              mappedInput.wasReleased(MappedInputManager::Button::Left2);
     if (releasedUp || releasedDown) {
       if (!panelHoldJumped) {
         panelIndex = releasedUp ? ButtonNavigator::previousIndex(panelIndex, count)

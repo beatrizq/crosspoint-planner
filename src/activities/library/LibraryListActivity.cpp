@@ -107,7 +107,7 @@ void LibraryListActivity::onEnter() {
 
   // Entered while Confirm was still held (typical when launched from the home
   // menu): ignore its release, or we would open whatever sits at row 0.
-  lockNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
+  lockNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Right2);
   requestUpdate(true);
 }
 
@@ -133,8 +133,8 @@ bool LibraryListActivity::rebuildIndex() {
 }
 
 void LibraryListActivity::swallowHeldReleases() {
-  lockNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Confirm);
-  lockNextBackRelease = mappedInput.isPressed(MappedInputManager::Button::Back);
+  lockNextConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Right2);
+  lockNextBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
 }
 
 int LibraryListActivity::selectedEntry() const {
@@ -715,11 +715,11 @@ bool LibraryListActivity::rowTextFor(const int entry, std::string& title, std::s
 bool LibraryListActivity::handleCustomInput() {
   if (optionPopup.handleInput(mappedInput, [this] { requestUpdate(); })) return true;
 
-  if (lockNextConfirmRelease && mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (lockNextConfirmRelease && mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     lockNextConfirmRelease = false;
     return true;
   }
-  if (lockNextBackRelease && mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (lockNextBackRelease && mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     lockNextBackRelease = false;
     return true;
   }
@@ -735,7 +735,7 @@ bool LibraryListActivity::handleButtons() {
   // armed as suppressed by wasLongPressed() and consumed globally by
   // ActivityManager::loop() before any activity runs, so it cannot land in
   // the freshly opened confirmation and select its default.
-  if (mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, LONG_PRESS_MS)) {
+  if (mappedInput.wasLongPressed(MappedInputManager::Button::Right2, LONG_PRESS_MS)) {
     if (tabsFocused()) {
       if (!degraded) toggleSortDirection();
     } else if (isRecentSort(sortOrder)) {
@@ -750,12 +750,12 @@ bool LibraryListActivity::handleButtons() {
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     handleBackAction();
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (tabsFocused()) {
       stepTab(1);
       return true;

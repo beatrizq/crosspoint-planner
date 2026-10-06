@@ -105,7 +105,7 @@ void EpubReaderChapterSelectionActivity::activateIndex(const int index) {
 }
 
 bool EpubReaderChapterSelectionActivity::handleButtons() {
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     ActivityResult result;
     result.isCancelled = true;
     setResult(std::move(result));
@@ -117,7 +117,7 @@ bool EpubReaderChapterSelectionActivity::handleButtons() {
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     activateIndex(nav.selected);
     return true;
   }

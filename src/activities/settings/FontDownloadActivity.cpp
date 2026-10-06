@@ -578,8 +578,8 @@ void FontDownloadActivity::downloadFamily(ManifestFamily& family) {
           fileProgress_ = downloaded;
           fileTotal_ = total;
           mappedInput.update(true);
-          if (mappedInput.isPressed(MappedInputManager::Button::Back) ||
-              mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+          if (mappedInput.isPressed(MappedInputManager::Button::Right1) ||
+              mappedInput.wasPressed(MappedInputManager::Button::Right1)) {
             cancelRequested_ = true;
           }
           // Home cancels immediately; other configured actions are deferred to
@@ -858,8 +858,8 @@ bool FontDownloadActivity::handleCustomInput() {
   if (state_ == COMPLETE) {
     int x = 0;
     int y = 0;
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back) ||
-        mappedInput.wasPressed(MappedInputManager::Button::Confirm) || mappedInput.wasScreenTapped(x, y)) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Right1) ||
+        mappedInput.wasPressed(MappedInputManager::Button::Right2) || mappedInput.wasScreenTapped(x, y)) {
       {
         RenderLock lock(*this);
         state_ = FAMILY_LIST;
@@ -868,14 +868,14 @@ bool FontDownloadActivity::handleCustomInput() {
       requestUpdate();
     }
   } else if (state_ == ERROR) {
-    if (mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+    if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) {
       {
         RenderLock lock(*this);
         state_ = FAMILY_LIST;
         rowsDirty_ = true;  // the failed download reset installed/hasUpdate
       }
       requestUpdate();
-    } else if (mappedInput.wasPressed(MappedInputManager::Button::Confirm)) {
+    } else if (mappedInput.wasPressed(MappedInputManager::Button::Right2)) {
       if (downloadingFamilyIndex_ >= 0 && downloadingFamilyIndex_ < static_cast<int>(families_.size())) {
         downloadFamily(families_[downloadingFamilyIndex_]);
         requestUpdateAndWait();

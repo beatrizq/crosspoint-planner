@@ -516,7 +516,7 @@ bool FileBrowserActivity::handleCustomInput() {
 
   // Long press BACK (1s+) goes to root folder (Books mode only).
   // In firmware-pick mode we keep navigation simple: short Back = up dir / cancel.
-  if (mode == Mode::Books && mappedInput.wasReleased(MappedInputManager::Button::Back) &&
+  if (mode == Mode::Books && mappedInput.wasReleased(MappedInputManager::Button::Right1) &&
       mappedInput.getHeldTime() >= GO_HOME_MS && basepath != "/") {
     {
       // buildScreen() runs on the render task and reads basepath plus `files`
@@ -535,18 +535,18 @@ bool FileBrowserActivity::handleCustomInput() {
 }
 
 bool FileBrowserActivity::handleButtons() {
-  if (mode == Mode::Books && mappedInput.wasLongPressed(MappedInputManager::Button::Confirm, GO_HOME_MS)) {
+  if (mode == Mode::Books && mappedInput.wasLongPressed(MappedInputManager::Button::Right2, GO_HOME_MS)) {
     app.clearTapFlash();
     showEntryActions();
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     activateSelected();
     return true;
   }
 
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
     // Short press: go up one directory, or go home if at root
     if (mappedInput.getHeldTime() < GO_HOME_MS) {
       if (basepath != "/") {
