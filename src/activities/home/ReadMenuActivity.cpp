@@ -19,6 +19,7 @@ void ReadMenuActivity::onEnter() {
   Activity::onEnter();
   // Home from here (and from the screens under it) lands back on the Reader tile.
   MainMenuActivity::setReturnArea(HomeArea::Reader);
+  swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   buildEntries();
   recentBooks = recentBookLoader::load(1);
   selectedIndex = 0;
@@ -75,7 +76,12 @@ void ReadMenuActivity::loop() {
   if (band.poll()) requestUpdate();
   if (headerFocused) bandStop = band.clamp(bandStop);
 
+  if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) swallowBackRelease = false;
   if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
+    if (swallowBackRelease) {
+      swallowBackRelease = false;
+      return;
+    }
     // On the calendar rows or the alert, Right1 opens that screen; on the status
     // bar (or anywhere else) it is Home, as always.
     if (headerFocused && band.handleRight1(bandStop)) return;

@@ -65,6 +65,9 @@ class ReadMenuActivity final : public Activity {
   // "next" from here returns to selectedIndex == 0, "previous" from here
   // wraps to the last entry. Right2 here opens Sync All.
   bool headerFocused = false;
+  // Set when entered while Back is still held (screens that leave on press, like File Transfer):
+  // that button's release belongs to the previous screen and must not send us Home.
+  bool swallowBackRelease = false;
   // The top of the screen -- status bar, today's calendar events, the newest pending
   // alert (see StatusBand). While headerFocused, bandStop says which of them has
   // focus; the whole band is one stop of this screen's loop, not just the status bar.
