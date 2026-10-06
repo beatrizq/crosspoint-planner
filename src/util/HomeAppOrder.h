@@ -115,16 +115,13 @@ void parse(const char* stored, int (&out)[APP_COUNT]);
 void format(const int (&order)[APP_COUNT], char* out, size_t outSize);
 
 /**
- * The app one step forward (or back) from `current` in the user's own grid
- * order, skipping any app that would not actually be a selectable tile right
- * now (Notifications without ENABLE_BLE_NOTIFY_SPIKE, Companion while
- * disabled -- the same gates HomeActivity::buildEntries() applies), and
- * wrapping at either end. Backs the side Left/Right "previous/next app"
- * shortcut every app screen has (see e.g. PlannerScreenActivity's own
- * loop()) -- reusing this rather than each screen re-deriving the visible
- * order keeps it consistent with what Home's own grid would actually show.
- * Falls back to the first visible app if `current` itself is not one (should
- * not happen: every caller passes its own, always-visible AppId).
+ * The app one step forward (or back) from `current` on the main screen's cycle --
+ * Reader and Planner (AppId::Companion), in the user's own order, wrapping at
+ * either end. Backs the side Up/Down "previous/next app" shortcut on the Read
+ * menu. Tasks, Calendar, Alerts and Settings are deliberately not stops: the
+ * first three are opened from inside the Planner (or, for Tasks, nowhere), and
+ * Settings from the main screen's Right1. Falls back to the first stop if
+ * `current` is not one.
  */
 AppId adjacentVisibleApp(AppId current, bool forward);
 

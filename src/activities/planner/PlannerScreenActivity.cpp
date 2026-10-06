@@ -267,35 +267,10 @@ void PlannerScreenActivity::loop() {
     return;
   }
 
-  // Side Up/Down: jump to the previous/next app in the home grid's own order,
-  // from wherever the cursor already is -- the same shortcut every app
-  // screen has (see QuickPickActivity/SettingsActivity's own identical
-  // block). Tab-switching (this screen's own tab bar) is still reachable the
-  // slower way: move the selection up to the tab bar and press Select to
-  // cycle it. Independent of the front buttons' own Up/Down (row paging)
-  // below; a fresh press each, same guard reasoning as Back/Confirm above.
-  if (mappedInput.wasPressed(MappedInputManager::Button::Up)) upPressSeen = true;
-  if (mappedInput.wasPressed(MappedInputManager::Button::Down)) downPressSeen = true;
-  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-    if (upPressSeen) activityManager.goToApp(homeAppOrder::adjacentVisibleApp(appId(), /*forward=*/false));
-    upPressSeen = false;
-    return;
-  }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (downPressSeen) activityManager.goToApp(homeAppOrder::adjacentVisibleApp(appId(), /*forward=*/true));
-    downPressSeen = false;
-    return;
-  }
-  // Swallowed for as long as either is held, on the press frame and every
-  // frame after: buttonNavigator's row paging below reacts to the logical
-  // NavNext/NavPrevious buttons, which are side Up/Down blended with front
-  // Left/Right (see MappedInputManager::mapButton). Without this, a side
-  // press would page a row immediately (NavNext/NavPrevious firing on the
-  // same press) and only switch the tab afterwards, on release.
-  if (mappedInput.isPressed(MappedInputManager::Button::Up) ||
-      mappedInput.isPressed(MappedInputManager::Button::Down)) {
-    return;
-  }
+  // Side Up/Down page the rows here, blended with the front Left1/Left2 (see
+  // MappedInputManager::mapButton()). They used to jump to the previous/next
+  // app; this screen is reached from the Planner now, so there is no app
+  // cycle to jump around from here.
 
   if (state != State::LIST) return;
 

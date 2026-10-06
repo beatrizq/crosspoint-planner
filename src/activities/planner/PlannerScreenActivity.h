@@ -173,16 +173,6 @@ class PlannerScreenActivity : public Activity {
   // and the cancel takes the user all the way back to Home instead of just
   // closing the popup.
   bool swallowBackRelease = false;
-  // Side Up/Down jump to the previous/next app in the home grid's own order
-  // (see loop()'s own comment), whatever row (or the tab bar itself) is
-  // currently selected -- this screen's own tabs are still reachable by
-  // navigating up to the tab bar and cycling it with Select. Guarded by a
-  // fresh-press check the same way Back/Confirm are above, in case one was
-  // already held down when some other gesture left this screen (a hold
-  // begun elsewhere should not fire an unintended jump the moment it is
-  // finally released here).
-  bool upPressSeen = false;
-  bool downPressSeen = false;
 
  private:
   // The tab Select moves to when the tab bar is focused; wraps at the end.
