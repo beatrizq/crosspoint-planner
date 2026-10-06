@@ -27,6 +27,9 @@ namespace {
 // Height of the status bar's focus highlight below the top of its row: a little
 // shorter than the row itself, which carries some breathing room underneath that
 // the highlight would otherwise bleed into the next part.
+// Height of the status row (clock/date/battery) on every screen with a band. MainMenuActivity's STATUS_BAR_HEIGHT
+// and QuickPickActivity's HEADER_CONTENT_HEIGHT are the same 36: keep the three equal.
+constexpr int UNTITLED_STATUS_ROW_HEIGHT = 36;
 constexpr int HIGHLIGHT_INSET = 6;
 // The highlight on a theme's own full header, which is taller than its clock/
 // battery row (see HEADER_FOCUS_HIGHLIGHT_HEIGHT in BaseTheme.h).
@@ -276,7 +279,10 @@ int StatusBand::drawTitled(const GfxRenderer& renderer, const char* title, const
   // The status bar, then the rows and the alert, then the title -- the title header
   // is the theme's own with its status row left out, which puts the title and its
   // rule exactly where the single header would have (batteryBarHeight + 3 down).
-  const int statusRowHeight = metrics.batteryBarHeight;
+  // The same row height the untitled screens (main menu, companion) use, so the calendar rows and the
+  // alert sit at the same y on every screen; the theme's batteryBarHeight is a little taller than the
+  // clock/battery row actually needs.
+  const int statusRowHeight = UNTITLED_STATUS_ROW_HEIGHT;
   GUI.drawLegacyHeader(renderer, Rect{0, top, pageWidth, statusRowHeight}, nullptr, nullptr, /*showRule=*/false,
                        /*includeStatusRow=*/true);
   if (focus == Stop::StatusBar) {
