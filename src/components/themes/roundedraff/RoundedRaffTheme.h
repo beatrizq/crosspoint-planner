@@ -9,9 +9,9 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .batteryHeight = 12,
                                  // Fit the 23px SMALL_FONT_ID line box and lift it one pixel while
                                  // keeping the 12px battery glyph at y=19, aligned with Lyra.
-                                 .topPadding = 13,
-                                 .batteryBarHeight = 24,
-                                 .headerHeight = 84,
+                                 .topPadding = 0,
+                                 .batteryBarHeight = 20,
+                                 .headerHeight = 45,
                                  .verticalSpacing = 10,
                                  .previewPadding = 12,
                                  .previewHeightPercent = 30,
@@ -26,7 +26,7 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .listScrollWidth = 4,
                                  .listScrollSide = 0,
                                  .listTitleBold = true,
-                                 .headerSidePadding = 18,
+                                 .headerSidePadding = 40,  // = contentSidePadding + the 20px row text inset
                                  .headerUnderlineSize = 0,
                                  .headerTitleAlign = 0,  // left
                                  .headerBatterySide = 0,

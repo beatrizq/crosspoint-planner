@@ -65,14 +65,15 @@ void RoundedRaffTheme::drawLegacyHeader(const GfxRenderer& renderer, Rect rect, 
     return;
   }
   const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
-  const int titleX = rect.x + sidePadding;
+  // Starts where the row text does: inside the row card, not at the card's edge.
+  const int titleX = rect.x + sidePadding + kInteractiveInsetX;
   const int titleY = rect.y + 14;
 
   // A second, embedded header drawn mid-screen (QuickPickActivity's own
   // scaled-down Tasks section below the companion figure) skips the battery
   // group entirely -- it already has one at the top of the screen, and the
   // title gets the full width instead.
-  int maxTitleWidth = rect.width - sidePadding * 2;
+  int maxTitleWidth = rect.width - sidePadding * 2 - kInteractiveInsetX;
   if (includeStatusRow) {
     const bool showBatteryPercentage =
         SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;

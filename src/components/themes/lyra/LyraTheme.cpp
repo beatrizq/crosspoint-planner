@@ -395,19 +395,16 @@ void LyraTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::ve
     const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, tab.label, EpdFontFamily::REGULAR);
 
     if (tab.selected) {
-      // The selected tab is the same rounded pill either way. With the bar
-      // focused it is solid black; with focus elsewhere it keeps that shape as
-      // just a border, the bar's own grey background showing through inside.
-      // 2px clear above and below the pill, between it and the lines that
-      // bound the bar (the rule above it, drawLine() below): the pill spans
-      // rows 2..height-4, the bar's own bottom line sits on row height-1.
-      const int pillY = rect.y + 2;
-      const int pillWidth = textWidth + 2 * hPaddingInSelection;
-      const int pillHeight = rect.height - 5;
+      // With the bar focused the selected tab is a solid black rounded pill (white label). With
+      // focus elsewhere -- the tab's content still showing below -- it is just its label, underlined.
+      // The pill spans rows 2..height-4, clear of the bar's own bottom line on row height-1.
       if (selected) {
-        renderer.fillRoundedRect(currentX, pillY, pillWidth, pillHeight, cornerRadius, Color::Black);
+        renderer.fillRoundedRect(currentX, rect.y + 2, textWidth + 2 * hPaddingInSelection, rect.height - 5,
+                                 cornerRadius, Color::Black);
       } else {
-        renderer.drawRoundedRect(currentX, pillY, pillWidth, pillHeight, selectionLineWidth, cornerRadius, true);
+        const int underlineY =
+            std::min(rect.y + 6 + renderer.getLineHeight(UI_10_FONT_ID) - 2, rect.y + rect.height - 5);
+        renderer.fillRect(currentX + hPaddingInSelection, underlineY, textWidth, selectionLineWidth);
       }
     }
 
