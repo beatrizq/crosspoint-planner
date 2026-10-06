@@ -247,9 +247,17 @@ void SettingsActivity::loop() {
     }
   }
 
+  // On the calendar rows or the alert, Right1 opens that screen -- on the *release*,
+  // unlike the Back/Home handling below, which acts on the press. Opening on the press
+  // would leave the button still down when the new screen appears, and its release
+  // would then land there as "Home" and close it straight away.
+  if (headerFocused && bandStop != StatusBand::Stop::StatusBar) {
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right1) && band.handleRight1(bandStop)) return;
+  }
+
   if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) {
-    // On the calendar rows or the alert, Right1 opens that screen.
-    if (headerFocused && band.handleRight1(bandStop)) return;
+    // On the calendar rows or the alert the press does nothing (see above).
+    if (headerFocused && bandStop != StatusBand::Stop::StatusBar) return;
     // Two-level Back, the same as the planner screens: from a setting row
     // it first surfaces the cursor to the category tab bar (labelled Back, see
     // render()); only from the tab bar or the header does it leave (labelled

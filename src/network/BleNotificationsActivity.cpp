@@ -81,6 +81,7 @@ void BleNotificationsActivity::onEnter() {
   bandStop = StatusBand::Stop::StatusBar;
   band.setShowAlert(false);
   band.poll();
+  swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   // Seen it -- clears the Home badge. Saved right away so the clear survives
   // a WiFi-sync reboot the same way the entries themselves do.
   if (BLE_NOTIFICATIONS.getUnreadCount() > 0) {
@@ -98,7 +99,13 @@ void BleNotificationsActivity::loop() {
   if (band.poll()) requestUpdate();
   if (headerFocused) bandStop = band.clamp(bandStop);
 
+  // A press seen here is a fresh one, so no stale release is owed any more.
+  if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) swallowBackRelease = false;
   if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
+    if (swallowBackRelease) {
+      swallowBackRelease = false;
+      return;
+    }
     // On the calendar rows, Right1 opens the Calendar screen.
     if (headerFocused && band.handleRight1(bandStop)) return;
     onGoHome();

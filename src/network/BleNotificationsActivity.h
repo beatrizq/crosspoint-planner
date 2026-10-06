@@ -27,6 +27,9 @@ class BleNotificationsActivity final : public Activity {
   // opens on a plain press -- same guard RecentBooksActivity uses for its own
   // long-press action.
   bool longPressFired = false;
+  // Right1 can still be held down when this screen opens (a screen that opens it on the
+  // press, not the release): its release is not a request to leave, so it is dropped.
+  bool swallowBackRelease = false;
 
   void openDetail();
   void dismissAll();

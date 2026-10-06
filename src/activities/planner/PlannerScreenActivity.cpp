@@ -45,6 +45,9 @@ void PlannerScreenActivity::onEnter() {
   bandStop = StatusBand::Stop::StatusBar;
   band.setShowCalendar(false);
   band.poll();
+  // Right1 can still be down if a screen opened this one on the press: its release is
+  // not a request to leave.
+  swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   requestUpdate();
 }
 
