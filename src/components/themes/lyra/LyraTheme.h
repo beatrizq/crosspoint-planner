@@ -43,8 +43,15 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .homeCoverTileHeight = 242,
                                  .homeRecentBooksCount = 1,
                                  .homeContinueReadingInMenu = false,
+                                 // The cover card moved to the top of the Read menu (see
+                                 // ReadMenuActivity, which calls drawRecentBookCover() itself
+                                 // now) -- Home gives the companion the full width instead.
+                                 .homeShowsCoverCard = false,
                                  .homeMenuTopOffset = 16,
+                                 .homeGridColumns = 3,
+                                 .homeGridTileHeight = 130,
                                  .buttonHintsHeight = 40,
+                                 .buttonHintsGap = 8,
                                  .sideButtonHintsWidth = 30,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
@@ -86,17 +93,47 @@ class LyraTheme : public BaseTheme {
  public:
   // Component drawing methods
   void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const override;
+  void drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle, bool showRule,
+                        bool includeStatusRow) const override;
   void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,
                      const char* rightLabel = nullptr) const override;
+  void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
+                  bool selected) const override;
+  bool tabIndexFromPoint(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs, int x, int y,
+                         int& index) const override;
+  int getListRowStep(bool hasSubtitle) const override;
+  int getListPageItems(int contentHeight, bool hasSubtitle) const override;
+  void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
+                const std::function<std::string(int index)>& rowTitle,
+                const std::function<std::string(int index)>& rowSubtitle,
+                const std::function<UIIcon(int index)>& rowIcon, const std::function<std::string(int index)>& rowValue,
+                bool highlightValue, const std::function<bool(int index)>& rowDimmed = nullptr) const override;
   void drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,
                        const char* btn4) const override;
-  void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const override;
+  void drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                           bool topSelected = false, bool bottomSelected = false) const override;
+  int getSideButtonHintsBottom(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const override;
   void drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                       const std::function<std::string(int index)>& buttonLabel,
                       const std::function<UIIcon(int index)>& rowIcon) const override;
+  int getGridRowStep(int contentHeight, int buttonCount) const override;
+  void drawButtonGrid(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
+                      const std::function<std::string(int index)>& buttonLabel,
+                      const std::function<UIIcon(int index)>& rowIcon,
+                      const std::function<int(int index)>& badgeCount = nullptr) const override;
+  Rect getGridTileIconRect(const GfxRenderer& renderer, Rect rect, int buttonCount, int index) const override;
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            const int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;
+  // Kept for Lyra3CoversTheme, which still shows its "no book yet" message
+  // through this on its own Home cover row.
   void drawEmptyRecents(const GfxRenderer& renderer, const Rect rect) const;
   bool showsFileIcons() const override { return true; }
+
+ private:
+  // Tile `index`'s own icon rect within a buttonCount-tile drawButtonGrid()
+  // layout at `rect` -- the single source of truth for that math, shared by
+  // drawButtonGrid() itself and the public getGridTileIconRect() override, so
+  // the two can never drift apart.
+  Rect tileIconRect(const GfxRenderer& renderer, Rect rect, int buttonCount, int index) const;
 };

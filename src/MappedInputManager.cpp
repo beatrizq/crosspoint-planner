@@ -84,16 +84,16 @@ bool MappedInputManager::mapButton(const Button button, bool (HalGPIO::*fn)(uint
 
   switch (button) {
     case Button::Right1:
-      // Logical Back maps to user-configured front button.
+      // Logical Right1 maps to user-configured front button.
       return (gpio.*fn)(SETTINGS.frontButtonRight1);
     case Button::Right2:
-      // Logical Confirm maps to user-configured front button.
+      // Logical Right2 maps to user-configured front button.
       return (gpio.*fn)(SETTINGS.frontButtonRight2);
     case Button::Left1:
-      // Logical Left maps to user-configured front button.
+      // Logical Left1 maps to user-configured front button.
       return (gpio.*fn)(SETTINGS.frontButtonLeft1);
     case Button::Left2:
-      // Logical Right maps to user-configured front button.
+      // Logical Left2 maps to user-configured front button.
       return (gpio.*fn)(SETTINGS.frontButtonLeft2);
     case Button::Up:
       // Side buttons remain fixed for Up/Down.

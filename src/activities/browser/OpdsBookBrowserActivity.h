@@ -18,7 +18,8 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
  public:
   enum class BrowserState { CHECK_WIFI, WIFI_SELECTION, LOADING, BROWSING, DOWNLOADING, ERROR, SEARCH_INPUT };
 
-  explicit OpdsBookBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, OpdsServer server);
+  explicit OpdsBookBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, OpdsServer server,
+                                   bool returnToReadMenu = false);
 
   void onEnter() override;
   void onExit() override;
@@ -44,6 +45,10 @@ class OpdsBookBrowserActivity final : public Activity, private UiAppHost {
   size_t downloadTotal = 0;
 
   OpdsServer server;  // Copied at construction — safe even if the store changes during browsing
+  // When set, Back at the catalog root returns to ReadMenuActivity instead of
+  // Home -- set only by ActivityManager::goToBrowser() on behalf of
+  // ReadMenuActivity.
+  bool returnToReadMenu = false;
 
   // Viewport memory (top/visibleRows) for the browsing list; `selected` is
   // mirrored from selectorIndex at build/move time.

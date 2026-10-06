@@ -7,8 +7,10 @@
 #include <vector>
 
 #include "CrossPointSettings.h"
-#include "activities/UiTabListActivity.h"
+#include "activities/Activity.h"
 #include "components/OptionPopup.h"
+#include "components/StatusBand.h"
+#include "util/ButtonNavigator.h"
 
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING };
 
@@ -16,20 +18,32 @@ enum class SettingAction {
   None,
   RemapFrontButtons,
   CustomiseStatusBar,
-  ClockSettings,
   KOReaderSync,
+  Todoist,
+  GoogleCalendar,
+  Companion,
+  AppOrder,
   OPDSBrowser,
   Network,
   ClearCache,
   CheckForUpdates,
   SdFirmwareUpdate,
+  FileTransfer,
   Language,
   DownloadFonts,
   TextSettings,
+  ClockSettings,
   KeyboardLayouts,
   HomeButton,
   About,
+  ControlsMenu,
+  LibraryMenu,
 };
+
+// A group of settings. The tab bar shows Display, Reader, System and Planner;
+// Controls and Library are submenus opened from the Reader tab, each shown by its
+// own SettingsActivity with just that group (a one-tab bar, Back returns).
+enum class SettingsBucket : uint8_t { None, Display, Reader, Controls, Library, System, Planner };
 
 struct SettingInfo {
   StrId nameId;
@@ -171,64 +185,67 @@ struct SettingInfo {
   }
 };
 
-class SettingsActivity final : public UiTabListActivity {
+class SettingsActivity final : public Activity {
+  ButtonNavigator buttonNavigator;
+
   int selectedCategoryIndex = 0;  // Currently selected category
+  int selectedSettingIndex = 0;
   int settingsCount = 0;
+  // An extra stop bolted onto selectedSettingIndex, ahead of its own existing
+  // "0 == tab bar" stop -- the same idiom PlannerScreenActivity's own
+  // headerFocused uses, just one level higher up: header, then tab bar
+  // (categories), then setting rows.
+  bool headerFocused = false;
+  // The top of the screen -- status bar, today's calendar events, the newest pending
+  // alert (see StatusBand) -- on the top-level screen only; a category's own submenu
+  // draws the plain header. While headerFocused, bandStop says which of them has focus.
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
 
   // Per-category settings derived from shared list + device-only actions
   std::vector<SettingInfo> displaySettings;
   std::vector<SettingInfo> readerSettings;
+  std::vector<SettingInfo> librarySettings;
   std::vector<SettingInfo> controlsSettings;
   std::vector<SettingInfo> systemSettings;
+  std::vector<SettingInfo> plannerSettings;
   const std::vector<SettingInfo>* currentSettings = nullptr;
 
   bool preserveQuickResumeTimeoutOn = false;
   bool quickResumeTimeoutAutoEnabled = false;
+  // Set only by SettingAction::Network -- every other row here opens its own
+  // activity, which owns its own WiFi/reboot lifecycle if it needs one.
+  bool wifiActivated = false;
 
   OptionPopup optionPopup;
 
-  // Row structure (label/actionValue) for *currentSettings, rebuilt only when
-  // the active category or a category's setting list changes
-  // (rebuildRowItems(), called from selectCategory()/rebuildSettingsLists())
-  // — not on every repaint. rowValues_ holds the live per-row value text,
-  // refreshed every buildScreen() call by assigning into the existing
-  // strings (no vector growth).
-  std::vector<std::string> rowValues_;
-  std::vector<freeink::ui::ListItem> rowItems_;
-  void rebuildRowItems();
+  // The groups on the tab bar, in order -- all four, or just one in a submenu.
+  std::vector<SettingsBucket> tabBuckets;
+  bool isSubmenu = false;
+  int categoryCount() const { return static_cast<int>(tabBuckets.size()); }
+  static StrId bucketName(SettingsBucket bucket);
 
-  static constexpr int categoryCount = 4;
-  static constexpr StrId categoryNames[categoryCount] = {StrId::STR_CAT_DISPLAY, StrId::STR_CAT_READER,
-                                                         StrId::STR_CAT_CONTROLS, StrId::STR_CAT_SYSTEM};
-
-  // --- UiTabListActivity contract ---
-  int listCount() const override { return settingsCount; }
-  int tabCount() const override { return categoryCount; }
-  int activeTab() const override { return selectedCategoryIndex; }
-  const char* tabLabel(int index) const override { return I18N.get(categoryNames[index]); }
-  void buildScreen(UiScreen& screen) override;
-  void activateIndex(int index) override;
-  void onTabAction(int index) override;
-  void stepTab(int direction) override;
-  bool handleButtons() override;
-  bool handleCustomInput() override;
-
-  static std::string settingValueText(const SettingInfo& setting);
-  void selectCategory(int categoryIndex);
-  void applyUiSettingChange(uint8_t CrossPointSettings::* valuePtr);
-
-  void enterCategory(int categoryIndex);
   void toggleCurrentSetting();
   void openSleepTimeoutPicker();
   void rebuildSettingsLists();
+  // Points currentSettings at the bucket for selectedCategoryIndex.
+  void applyCategorySelection();
   void syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged);
 
-  void drawChrome() override;
-  void drawFooter() override;
-
  public:
-  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  // `only`: show just that group (a submenu); None shows the whole tab bar.
+  explicit SettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                            SettingsBucket only = SettingsBucket::None)
+      : Activity("Settings", renderer, mappedInput), isSubmenu(only != SettingsBucket::None) {
+    if (isSubmenu) {
+      tabBuckets = {only};
+    } else {
+      // System first: it is the tab Settings opens on.
+      tabBuckets = {SettingsBucket::System, SettingsBucket::Display, SettingsBucket::Reader, SettingsBucket::Planner};
+    }
+  }
   void onEnter() override;
   void onExit() override;
-  void render(RenderLock&& lock) override;
+  void loop() override;
+  void render(RenderLock&&) override;
 };

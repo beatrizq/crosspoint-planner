@@ -13,7 +13,8 @@
  */
 class OpdsServerListActivity final : public UiListActivity {
  public:
-  explicit OpdsServerListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool pickerMode = false);
+  explicit OpdsServerListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool pickerMode = false,
+                                  bool returnToReadMenu = false);
 
   void onEnter() override;
   void render(RenderLock&&) override;
@@ -37,6 +38,11 @@ class OpdsServerListActivity final : public UiListActivity {
   // folder/format rows' live subtitle is refreshed in place by buildScreen().
   std::vector<freeink::ui::ListItem> rowItems_;
   void rebuildRowItems();
+
+  // pickerMode only: when set, Back returns to ReadMenuActivity instead of
+  // Home -- set only by ActivityManager::goToBrowser() on behalf of
+  // ReadMenuActivity.
+  bool returnToReadMenu = false;
 
   int getItemCount() const;
   void handleSelection();

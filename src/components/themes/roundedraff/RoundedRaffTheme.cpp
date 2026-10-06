@@ -21,8 +21,9 @@ constexpr int kBottomRadius = 15;
 constexpr int kRowRadius = 20;
 constexpr int kInteractiveInsetX = 20;
 constexpr int kSelectableRowGap = 6;
-constexpr int kTitleFontId = UI_12_FONT_ID;  // Requested main title size: 12px
-constexpr int kGuideFontId = SMALL_FONT_ID;  // Closest available to requested 6px
+constexpr int kTitleFontId = UI_12_FONT_ID;     // Requested main title size: 12px
+constexpr int kSubtitleFontId = SMALL_FONT_ID;  // Requested subtitle size: 8px
+constexpr int kGuideFontId = SMALL_FONT_ID;     // Closest available to requested 6px
 
 void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pageStartIndex, int pageItems) {
   if (itemCount <= 0 || pageItems <= 0 || itemCount <= pageItems) {
@@ -53,6 +54,154 @@ void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const 
     return;
   }
   BaseTheme::drawHeader(renderer, rect, title, subtitle, backButton);
+}
+
+void RoundedRaffTheme::drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
+                                        const bool showRule, const bool includeStatusRow) const {
+  (void)subtitle;
+  (void)showRule;  // This theme never draws a header rule to begin with.
+  // Home screen header is custom-rendered in drawRecentBookCover.
+  if (title == nullptr) {
+    return;
+  }
+  const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
+  const int titleX = rect.x + sidePadding;
+  const int titleY = rect.y + 14;
+
+  // A second, embedded header drawn mid-screen (QuickPickActivity's own
+  // scaled-down Tasks section below the companion figure) skips the battery
+  // group entirely -- it already has one at the top of the screen, and the
+  // title gets the full width instead.
+  int maxTitleWidth = rect.width - sidePadding * 2;
+  if (includeStatusRow) {
+    const bool showBatteryPercentage =
+        SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+    const int batteryIconX = rect.x + rect.width - sidePadding - RoundedRaffMetrics::values.batteryWidth;
+
+    // Reserve space for the widest possible percentage text to avoid title/battery overlap
+    int batteryGroupLeftX = batteryIconX;
+    if (showBatteryPercentage) {
+      // Clear a fixed-width area for the battery percentage to avoid ghosting when digit count changes (e.g. 100% ->
+      // 99%)
+      const int maxTextWidth = renderer.getTextWidth(SMALL_FONT_ID, "100%");
+      batteryGroupLeftX -= maxTextWidth + batteryPercentSpacing;
+
+      const int clearW = maxTextWidth + batteryPercentSpacing + RoundedRaffMetrics::values.batteryWidth;
+      const int clearH = std::max(renderer.getTextHeight(SMALL_FONT_ID), RoundedRaffMetrics::values.batteryHeight + 8);
+      renderer.fillRect(batteryIconX - maxTextWidth - batteryPercentSpacing, rect.y + 14, clearW, clearH, false);
+    }
+
+    maxTitleWidth = std::max(0, batteryGroupLeftX - 20 - titleX);
+    drawBatteryRight(renderer,
+                     Rect{batteryIconX, rect.y + 14, RoundedRaffMetrics::values.batteryWidth,
+                          RoundedRaffMetrics::values.batteryHeight},
+                     showBatteryPercentage);
+  }
+
+  auto headerTitle = renderer.truncatedText(kTitleFontId, title, maxTitleWidth, EpdFontFamily::BOLD);
+  renderer.drawText(kTitleFontId, titleX, titleY, headerTitle.c_str(), true, EpdFontFamily::BOLD);
+}
+
+namespace {
+// This bar divides its width into equal slots rather than sizing each tab to its
+// label, so overflow shows up as slots too narrow to read rather than as tabs
+// past the screen edge. A slot narrower than this cannot hold a word, so it sets
+// how many tabs the bar will take before it starts windowing.
+constexpr int MIN_SLOT_WIDTH = 96;
+// Room at each end for an overflow marker.
+constexpr int MARKER_WIDTH = 22;
+}  // namespace
+
+void RoundedRaffTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
+                                  bool selected) const {
+  if (tabs.empty()) {
+    return;
+  }
+
+  // The Calendar screen draws a tab per selected calendar, so the bar can be
+  // handed more tabs than it has readable slots for; only the window around the
+  // active one is drawn.
+  int active = 0;
+  for (size_t i = 0; i < tabs.size(); i++) {
+    if (tabs[i].selected) active = static_cast<int>(i);
+  }
+  const std::vector<int> widths(tabs.size(), MIN_SLOT_WIDTH);
+  const TabWindow window = tabWindow(widths, rect.width, MARKER_WIDTH * 2, active);
+
+  const int tabY = rect.y + 4;
+  const int tabHeight = rect.height - 12;
+  const int leftMarker = window.moreBefore ? MARKER_WIDTH : 0;
+  const int rightMarker = window.moreAfter ? MARKER_WIDTH : 0;
+  const int tabsX = rect.x + leftMarker;
+  const int slotWidth = std::max(1, (rect.width - leftMarker - rightMarker) / std::max(1, window.count));
+  const int markerY = tabY + (tabHeight - renderer.getLineHeight(kTitleFontId)) / 2;
+
+  if (window.moreBefore) {
+    renderer.drawText(kTitleFontId, rect.x + 4, markerY, TAB_MORE_BEFORE, true, EpdFontFamily::BOLD);
+  }
+
+  for (int i = 0; i < window.count; i++) {
+    const int slotX = tabsX + i * slotWidth;
+    const int tabX = slotX + 4;
+    const int tabWidth = slotWidth - 8;
+    const auto& tab = tabs[static_cast<size_t>(window.first + i)];
+
+    if (tab.selected) {
+      renderer.fillRoundedRect(tabX, tabY, tabWidth, tabHeight, 18, selected ? Color::Black : Color::DarkGray);
+    }
+
+    // Truncated to its slot: the slots are equal, so a long calendar name would
+    // otherwise run into its neighbours.
+    const auto shown = renderer.truncatedText(kTitleFontId, tab.label, tabWidth, EpdFontFamily::BOLD);
+    const int textWidth = renderer.getTextWidth(kTitleFontId, shown.c_str(), EpdFontFamily::BOLD);
+    const int textX = slotX + (slotWidth - textWidth) / 2;
+    const int textY = tabY + (tabHeight - renderer.getLineHeight(kTitleFontId)) / 2;
+    renderer.drawText(kTitleFontId, textX, textY, shown.c_str(), !(tab.selected), EpdFontFamily::BOLD);
+  }
+
+  if (window.moreAfter) {
+    renderer.drawText(kTitleFontId, rect.x + rect.width - MARKER_WIDTH + 4, markerY, TAB_MORE_AFTER, true,
+                      EpdFontFamily::BOLD);
+  }
+
+  // Full-width divider between tabs and setting rows.
+  renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
+}
+
+bool RoundedRaffTheme::tabIndexFromPoint(const GfxRenderer& renderer, const Rect rect, const std::vector<TabInfo>& tabs,
+                                         const int x, const int y, int& index) const {
+  (void)renderer;
+  if (tabs.empty() || y < rect.y || y >= rect.y + rect.height || x < rect.x || x >= rect.x + rect.width) {
+    return false;
+  }
+
+  // Windowed exactly as drawTabBar does, so a tap lands on the tab that is
+  // actually under it once the bar is scrolled.
+  int active = 0;
+  for (size_t i = 0; i < tabs.size(); i++) {
+    if (tabs[i].selected) active = static_cast<int>(i);
+  }
+  const std::vector<int> widths(tabs.size(), MIN_SLOT_WIDTH);
+  const TabWindow window = tabWindow(widths, rect.width, MARKER_WIDTH * 2, active);
+
+  const int leftMarker = window.moreBefore ? MARKER_WIDTH : 0;
+  const int rightMarker = window.moreAfter ? MARKER_WIDTH : 0;
+
+  // The markers step the window one tab that way, so they are controls rather
+  // than dead space.
+  if (window.moreBefore && x < rect.x + leftMarker) {
+    index = window.first - 1;
+    return true;
+  }
+  if (window.moreAfter && x >= rect.x + rect.width - rightMarker) {
+    index = window.first + window.count;
+    return true;
+  }
+
+  const int slotWidth = std::max(1, (rect.width - leftMarker - rightMarker) / std::max(1, window.count));
+  const int slot = std::min(window.count - 1, (x - rect.x - leftMarker) / slotWidth);
+  index = window.first + std::max(0, slot);
+  return true;
 }
 
 void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
@@ -196,6 +345,96 @@ void RoundedRaffTheme::drawTextField(const GfxRenderer& renderer, Rect rect, con
   const int lineW = textWidth + hPadding * 2;
   const int lineStart = rect.x + (rect.width - lineW) / 2;
   renderer.drawLine(lineStart, lineY, lineStart + lineW - 1, lineY, thickness, true);
+}
+
+int RoundedRaffTheme::getListRowStep(bool hasSubtitle) const {
+  const int rowHeight =
+      hasSubtitle ? RoundedRaffMetrics::values.listWithSubtitleRowHeight : RoundedRaffMetrics::values.listRowHeight;
+  return rowHeight + kSelectableRowGap;
+}
+
+int RoundedRaffTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
+  return std::max(1, contentHeight / getListRowStep(hasSubtitle));
+}
+
+void RoundedRaffTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
+                                const std::function<std::string(int index)>& rowTitle,
+                                const std::function<std::string(int index)>& rowSubtitle,
+                                const std::function<UIIcon(int index)>& rowIcon,
+                                const std::function<std::string(int index)>& rowValue, bool highlightValue,
+                                const std::function<bool(int index)>& rowDimmed) const {
+  (void)rowIcon;
+  (void)highlightValue;
+  (void)rowDimmed;
+  const bool hasSubtitle = static_cast<bool>(rowSubtitle);
+  const int titleLineHeight = renderer.getLineHeight(kTitleFontId);
+  const int subtitleLineHeight = renderer.getLineHeight(kSubtitleFontId);
+  constexpr int subtitleTopPadding = 10;
+  constexpr int subtitleBottomPadding = 10;
+  constexpr int subtitleInterLineGap = 4;
+  const int subtitleRowHeight =
+      subtitleTopPadding + titleLineHeight + subtitleInterLineGap + subtitleLineHeight + subtitleBottomPadding;
+  const int rowHeight = hasSubtitle ? subtitleRowHeight : RoundedRaffMetrics::values.listRowHeight;
+  const int rowStep = rowHeight + kSelectableRowGap;
+  const int pageItems = std::max(1, rect.height / rowStep);
+  const int pageStartIndex = std::max(0, selectedIndex / pageItems) * pageItems;
+
+  const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
+  const int rowX = rect.x + sidePadding;
+  const int rowWidth = rect.width - sidePadding * 2;
+
+  for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
+    const int rowY = rect.y + (i % pageItems) * rowStep;
+    const bool isSelected = i == selectedIndex;
+    renderer.fillRoundedRect(rowX, rowY, rowWidth, rowHeight, kRowRadius, isSelected ? Color::Black : Color::White);
+
+    constexpr int kMinTitleWidth = 40;
+    constexpr int kMinValueGap = kInteractiveInsetX;
+    int textAreaWidth = rowWidth - kInteractiveInsetX * 2;
+    if (rowValue) {
+      std::string valueText = rowValue(i);
+      if (!valueText.empty()) {
+        const int maxValueWidth = std::max(0, rowWidth - kInteractiveInsetX * 2 - kMinValueGap - kMinTitleWidth);
+        if (maxValueWidth > 0) {
+          const std::string truncatedValue =
+              renderer.truncatedText(kTitleFontId, valueText.c_str(), maxValueWidth, EpdFontFamily::REGULAR);
+          const int valueW = renderer.getTextWidth(kTitleFontId, truncatedValue.c_str(), EpdFontFamily::REGULAR);
+          renderer.drawText(kTitleFontId, rowX + rowWidth - kInteractiveInsetX - valueW,
+                            rowY + (rowHeight - renderer.getLineHeight(kTitleFontId)) / 2, truncatedValue.c_str(),
+                            !isSelected, EpdFontFamily::REGULAR);
+          textAreaWidth = std::max(0, textAreaWidth - valueW - kMinValueGap);
+        }
+      }
+    }
+
+    if (hasSubtitle) {
+      const std::string subtitleRaw = rowSubtitle(i);
+      auto title = renderer.truncatedText(kTitleFontId, rowTitle(i).c_str(), textAreaWidth, EpdFontFamily::BOLD);
+
+      if (subtitleRaw.empty()) {
+        // If there is no subtitle/author, center title vertically in the full row.
+        const int centeredTitleY = rowY + (rowHeight - titleLineHeight) / 2;
+        renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX, centeredTitleY, title.c_str(), !isSelected,
+                          EpdFontFamily::BOLD);
+      } else {
+        const int titleY = rowY + subtitleTopPadding;
+        const int subtitleY = titleY + titleLineHeight + subtitleInterLineGap;
+        auto subtitle =
+            renderer.truncatedText(kSubtitleFontId, subtitleRaw.c_str(), textAreaWidth, EpdFontFamily::REGULAR);
+        renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX, titleY, title.c_str(), !isSelected,
+                          EpdFontFamily::BOLD);
+        renderer.drawText(kSubtitleFontId, rowX + kInteractiveInsetX, subtitleY, subtitle.c_str(), !isSelected,
+                          EpdFontFamily::REGULAR);
+      }
+    } else {
+      auto title = renderer.truncatedText(kTitleFontId, rowTitle(i).c_str(), textAreaWidth, EpdFontFamily::BOLD);
+      renderer.drawText(kTitleFontId, rowX + kInteractiveInsetX,
+                        rowY + (rowHeight - renderer.getLineHeight(kTitleFontId)) / 2, title.c_str(), !isSelected,
+                        EpdFontFamily::BOLD);
+    }
+  }
+
+  drawScrollBar(renderer, rect, itemCount, pageStartIndex, pageItems);
 }
 
 void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const char* btn2, const char* btn3,

@@ -65,8 +65,9 @@ const char* tabLabelFor(const int tab) {
 
 }  // namespace
 
-LibraryListActivity::LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
-    : UiTabListActivity("Library", renderer, mappedInput, true) {
+LibraryListActivity::LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                         const bool returnToReadMenu)
+    : UiTabListActivity("Library", renderer, mappedInput, true), returnToReadMenu(returnToReadMenu) {
   // Three short tab labels: a full-slot pill would stretch across a third of
   // the screen, so cap it at the label plus padding (slots stay put).
   tabPillMaxPad = 16;
@@ -663,6 +664,8 @@ void LibraryListActivity::handleBackAction() {
     // Keep the current list and viewport while returning focus to the tabs.
     nav.selected = 0;
     requestUpdate();
+  } else if (returnToReadMenu) {
+    activityManager.goToReadMenu();
   } else {
     onGoHome();
   }

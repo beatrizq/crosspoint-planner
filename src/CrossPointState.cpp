@@ -53,6 +53,18 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["readerActivityLoadCount"] = readerActivityLoadCount;
   doc["lastSleepFromReader"] = lastSleepFromReader;
   doc["showBootScreen"] = showBootScreen;
+  doc["lastSleepFromQuickPick"] = lastSleepFromQuickPick;
+  doc["focusSessionActive"] = focusSessionActive;
+  doc["focusSessionText"] = focusSessionText;
+  doc["focusSessionItemId"] = focusSessionItemId;
+  doc["focusSessionEndAbsMinutes"] = focusSessionEndAbsMinutes;
+  doc["focusSessionEndHour"] = focusSessionEndHour;
+  doc["focusSessionEndMinute"] = focusSessionEndMinute;
+  doc["companionSessionActive"] = companionSessionActive;
+  doc["companionSessionMood"] = companionSessionMood;
+  doc["companionSessionEndAbsMinutes"] = companionSessionEndAbsMinutes;
+  doc["companionSessionEndHour"] = companionSessionEndHour;
+  doc["companionSessionEndMinute"] = companionSessionEndMinute;
 }
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
@@ -90,5 +102,17 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   readerActivityLoadCount = doc["readerActivityLoadCount"] | static_cast<uint8_t>(0);
   lastSleepFromReader = doc["lastSleepFromReader"] | false;
   showBootScreen = doc["showBootScreen"] | true;
+  lastSleepFromQuickPick = doc["lastSleepFromQuickPick"] | false;
+  focusSessionActive = doc["focusSessionActive"] | false;
+  focusSessionText = doc["focusSessionText"] | "";
+  focusSessionItemId = doc["focusSessionItemId"] | "";
+  focusSessionEndAbsMinutes = doc["focusSessionEndAbsMinutes"] | static_cast<int32_t>(0);
+  focusSessionEndHour = doc["focusSessionEndHour"] | static_cast<uint8_t>(0);
+  focusSessionEndMinute = doc["focusSessionEndMinute"] | static_cast<uint8_t>(0);
+  companionSessionActive = doc["companionSessionActive"] | false;
+  companionSessionMood = doc["companionSessionMood"] | static_cast<uint8_t>(0);
+  companionSessionEndAbsMinutes = doc["companionSessionEndAbsMinutes"] | static_cast<int32_t>(0);
+  companionSessionEndHour = doc["companionSessionEndHour"] | static_cast<uint8_t>(0);
+  companionSessionEndMinute = doc["companionSessionEndMinute"] | static_cast<uint8_t>(0);
   return true;
 }

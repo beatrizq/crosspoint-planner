@@ -40,6 +40,8 @@ include(GoogleTest)
 
 add_subdirectory(streaming_json_parser)
 add_subdirectory(release_json_parser)
+add_subdirectory(todoist_tasks_parser)
+add_subdirectory(gcal_parsers)
 add_subdirectory(differential_rounding)
 add_subdirectory(hyphenation_eval)
 add_subdirectory(utf8_compose)
@@ -73,3 +75,4 @@ add_subdirectory(absolute_grayscale)
 
 add_subdirectory(sd_card_font)
 add_subdirectory(glyph_bitmap)
+add_subdirectory(companion_mood)

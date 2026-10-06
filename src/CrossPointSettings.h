@@ -84,12 +84,29 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     FRONT_BUTTON_LAYOUT_COUNT
   };
 
-  // Front button hardware identifiers (for remapping)
+  // Front button hardware identifiers (for remapping).
+  //
+  // These raw indices (0-3) are HalGPIO::BTN_BACK/BTN_CONFIRM/BTN_LEFT/
+  // BTN_RIGHT -- freeink-sdk's own names, unrelated to this device's actual
+  // physical layout (see MappedInputManager's own header comment for the
+  // Left1/Left2/Right1/Right2 scheme these hardware indices are the default
+  // values for). Every theme's drawButtonHints() draws its btn1/btn2 in a
+  // left-hand screen group and btn3/btn4 in a right-hand one (BaseTheme,
+  // LyraTheme, RoundedRaffTheme all agree), and MappedInputManager::
+  // mapFrontLabels() builds those four labels in fixed raw-hardware order
+  // (BACK, CONFIRM, LEFT, RIGHT) -- so hw index 0/1 render in the left-hand
+  // group and 2/3 in the right-hand one. FRONT_HW_LEFT1/LEFT2 must therefore
+  // default to 0/1 and FRONT_HW_RIGHT1/RIGHT2 to 2/3, confirmed against the
+  // real device: the reverse (this enum's own previous values) put Right1/
+  // Right2 ("Apps"/"Select") on the physical left pair and Left1/Left2 ("Up"/
+  // "Down") on the physical right pair. A user's own remap (ButtonRemapActivity
+  // captures a literal press via getPressedFrontButton(), not one of these
+  // symbols) is unaffected either way.
   enum FRONT_BUTTON_HARDWARE {
-    FRONT_HW_RIGHT1 = 0,
-    FRONT_HW_RIGHT2 = 1,
-    FRONT_HW_LEFT1 = 2,
-    FRONT_HW_LEFT2 = 3,
+    FRONT_HW_LEFT1 = 0,
+    FRONT_HW_LEFT2 = 1,
+    FRONT_HW_RIGHT1 = 2,
+    FRONT_HW_RIGHT2 = 3,
     FRONT_BUTTON_HARDWARE_COUNT
   };
 
@@ -153,7 +170,14 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     PAGE_TURN = 2,
     FORCE_REFRESH = 3,
     FOOTNOTES = 4,
-    PWR_CONFIRM = 5,
+    PWR_CONFIRM = 6,
+    // A genuine short press (released before the ordinary hold-to-sleep
+    // duration) sleeps the device using Quick Resume specifically, regardless
+    // of the chosen Sleep Screen mode; holding it past that duration still
+    // sleeps normally, with whichever Sleep Screen mode is set -- see the
+    // release-triggered branch in main.cpp's loop() and
+    // enterDeepSleep()'s own forceQuickResume parameter.
+    SHORT_PWRBTN_QUICK_RESUME = 5,
     SHORT_PWRBTN_COUNT
   };
 
@@ -170,6 +194,26 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
+  // Per-app display names. Empty means "use the app's own name", which is what
+  // every one of these ships as; a value here replaces it on the home grid and on
+  // the app's own screen, while Settings keeps listing the service so an app is
+  // always findable by the name its account is with. Persisted via category-less
+  // SettingInfo::Strings in SettingsList.h - edited from each app's settings
+  // screen, so they stay out of the on-device Settings list.
+  //
+  // 24 bytes each: a name longer than that is truncated by the tile anyway.
+  char tasksNickname[24] = "";
+  char calendarNickname[24] = "";
+  // Same idea, for the companion -- falls back to its own built-in character
+  // name (CompanionTracker::displayName()) rather than an app's service name,
+  // since the companion has no account behind it to keep listing.
+  char companionNickname[24] = "";
+  // Home grid app order: one digit per app id, left to right (see
+  // util/HomeAppOrder.h). Persisted via a category-less SettingInfo::String in
+  // SettingsList.h, so it stays out of the on-device Settings screen - it is
+  // edited from the App Order screen. An unreadable value falls back to the
+  // built-in order rather than emptying the home grid.
+  char homeAppOrder[16] = "01234";
   // Hide battery percentage
   enum HIDE_BATTERY_PERCENTAGE { HIDE_NEVER = 0, HIDE_READER = 1, HIDE_ALWAYS = 2, HIDE_BATTERY_PERCENTAGE_COUNT };
 
@@ -224,9 +268,20 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // render by ActivityManager. The sleep screen opts out itself.
   uint8_t screenInverted = 0;
   // Sleep screen cover mode settings
+  // Font size for the Planner screens (tasks and calendar). One setting for
+  // both tabs: they are read the same way, at the same distance, and splitting
+  // them would be two settings answering one question.
+  enum PLANNER_FONT_SIZE { PLANNER_FONT_SMALL = 0, PLANNER_FONT_LARGE, PLANNER_FONT_SIZE_COUNT };
+  uint8_t plannerFontSize = PLANNER_FONT_SMALL;
+
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
   uint8_t sleepScreenCoverFilter = NO_FILTER;
+  // Rotates the sleep screen 180 degrees, for a device held or mounted upside
+  // down (see SleepActivity::onEnter()). Not the same as the cover filter's
+  // Inverted option above, which flips black and white rather than the
+  // orientation.
+  uint8_t sleepScreenInvert = 0;
   // Status bar settings
   uint8_t statusBarChapterPageCount = 1;
   uint8_t statusBarBookProgressPercentage = 1;
@@ -329,6 +384,39 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Focus Reading - emphasizes the first part of words with bold
   uint8_t focusReadingEnabled = 0;
   uint8_t readerMenuStyle = READER_MENU_LIST;
+  // Index into companion::COMPANION_SPRITES (0 = the first companion).
+  // Persisted numerically, so sprites/order.txt is append-only.
+  uint8_t companionId = 0;
+  // Whether the Companion screen draws the companion figure and its speech
+  // bubble. Off hands that space to the Tasks section below it and drops the
+  // figure from the focus loop; the alerts and calendar rows above are unaffected.
+  uint8_t showCompanion = 1;
+  // Sleep window the companion shows the Sleeping mood during, local wall-clock
+  // time. Default 22:00-07:00. May wrap past midnight (start > end); start ==
+  // end means the window never applies (24 awake hours, not 24 asleep).
+  uint8_t companionSleepStartHour = 22;
+  uint8_t companionSleepStartMinute = 0;
+  uint8_t companionSleepEndHour = 7;
+  uint8_t companionSleepEndMinute = 0;
+  // Mood ladder tuning -- see MoodThresholds in lib/Companion/CompanionMood.h.
+  // Tasks completed today needed for the top tier, Amazed. Must stay above
+  // companionHappyPoints or Amazed becomes unreachable.
+  uint8_t companionAmazedPoints = 8;
+  // Tasks completed today needed for the Happy tier.
+  // Must stay above companionSatisfiedPoints (and below companionAmazedPoints)
+  // or Happy becomes unreachable -- CompanionSettingsActivity clamps these on
+  // every edit, so they only ever land here already valid; CompanionTracker
+  // clamps again on read as a backstop against a hand-edited settings.json.
+  uint8_t companionHappyPoints = 3;
+  // Tasks completed today needed to count as "did something"
+  // (Satisfied) rather than starting the Cranky/Neglected decay. Must stay
+  // >= 1 -- 0 would mean every day, even an empty one, already qualifies,
+  // making the decay tiers unreachable.
+  uint8_t companionSatisfiedPoints = 1;
+  // Quiet days (no qualifying day) at or above which the mood bottoms out at
+  // Neglected rather than Cranky. Must stay >= 1, for the same reachability
+  // reason as companionSatisfiedPoints.
+  uint8_t companionNeglectedDays = 3;
   // SD card font family name (empty = use built-in fontFamily)
   char sdFontFamilyName[32] = "";
   // Dictionary folder name under /dictionaries (empty = no dictionary)
@@ -373,7 +461,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // books someone reads is not necessarily the language of their UI.
   // See keyboard_layouts:: for the bit assignment and the defaulting rules.
   uint16_t keyboardLayouts = 0;
-  // Quick Resume: keep current content visible with moon icon instead of showing a static sleep screen.
+
+  // Quick Resume after an inactivity timeout (keeps the current screen with a moon icon).
   uint8_t quickResumeSleepScreen = QUICK_RESUME_NEVER;
 
   static constexpr uint8_t MIN_SLEEP_TIMEOUT_MINUTES = 1;

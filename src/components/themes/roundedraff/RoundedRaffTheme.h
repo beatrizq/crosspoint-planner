@@ -50,8 +50,12 @@ constexpr ThemeMetrics values = {.batteryWidth = 15,
                                  .homeCoverTileHeight = 341,
                                  .homeRecentBooksCount = 1,
                                  .homeContinueReadingInMenu = true,
+                                 .homeShowsCoverCard = true,
                                  .homeMenuTopOffset = 20,
+                                 .homeGridColumns = 0,
+                                 .homeGridTileHeight = 0,
                                  .buttonHintsHeight = 40,
+                                 .buttonHintsGap = 8,
                                  .sideButtonHintsWidth = 30,
                                  .progressBarHeight = 16,
                                  .progressBarMarginTop = 1,
@@ -93,6 +97,19 @@ class RoundedRaffTheme : public BaseTheme {
  public:
   void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle = nullptr,
                   bool backButton = true) const override;
+  void drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle = nullptr,
+                        bool showRule = true, bool includeStatusRow = true) const override;
+  void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,
+                  bool selected) const override;
+  bool tabIndexFromPoint(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs, int x, int y,
+                         int& index) const override;
+  int getListRowStep(bool hasSubtitle) const override;
+  int getListPageItems(int contentHeight, bool hasSubtitle) const override;
+  void drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
+                const std::function<std::string(int index)>& rowTitle,
+                const std::function<std::string(int index)>& rowSubtitle,
+                const std::function<UIIcon(int index)>& rowIcon, const std::function<std::string(int index)>& rowValue,
+                bool highlightValue, const std::function<bool(int index)>& rowDimmed = nullptr) const override;
   void drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std::vector<RecentBook>& recentBooks,
                            int selectorIndex, bool& coverRendered, bool& coverBufferStored, bool& bufferRestored,
                            std::function<bool()> storeCoverBuffer) const override;

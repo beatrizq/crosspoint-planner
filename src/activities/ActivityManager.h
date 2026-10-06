@@ -6,18 +6,45 @@
 
 #include <atomic>
 #include <cassert>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "activities/network/FileTransferReturn.h"
+#include "util/HomeAppOrder.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity;    // forward declaration
 class RenderLock;  // forward declaration
 
-enum class HomeMenuItem { NONE, FILE_BROWSER, LIBRARY, OPDS_BROWSER, FILE_TRANSFER, SETTINGS_MENU };
+// TASKS and CALENDAR are a tile and a screen each.
+enum class HomeMenuItem {
+  NONE,
+  READ_MENU,
+  FILE_BROWSER,
+  LIBRARY,
+  TASKS,
+  CALENDAR,
+  OPDS_BROWSER,
+  FILE_TRANSFER,
+  SETTINGS_MENU,
+  // Named NOTIFICATIONS, not BLE_NOTIFICATIONS: the latter collides with the
+  // BLE_NOTIFICATIONS macro (BleNotificationQueue.h's
+  // #define BLE_NOTIFICATIONS BleNotificationQueue::getInstance()) -- the
+  // preprocessor rewrites it even after "HomeMenuItem::", which does not fail
+  // quietly (it errors on the resulting bogus qualified name).
+  NOTIFICATIONS,
+  // Named COMPANION_SCREEN, not COMPANION: the latter collides with the
+  // COMPANION macro (CompanionTracker.h's
+  // #define COMPANION CompanionTracker::getInstance()), the same problem
+  // NOTIFICATIONS above already has its own comment about. Opens
+  // QuickPickActivity, the same as any other home grid tile -- see
+  // HomeActivity::activateCompanion().
+  COMPANION_SCREEN
+};
 
 /**
  * ActivityManager
@@ -81,18 +108,50 @@ class ActivityManager {
   void replaceActivity(std::unique_ptr<Activity>&& newActivity);
 
   // goTo... functions are convenient wrapper for replaceActivity()
-  void goToFileTransfer();
+  // returnToReadMenu routes that screen's own Back button to ReadMenuActivity
+  // instead of Home -- set only by ReadMenuActivity itself, since every other
+  // caller of these four still expects Back to land on Home as before.
+  void goToFileTransfer(FileTransferReturn returnTo = FileTransferReturn::Home);
   void goToUsbDrive();
   void goToSettings();
-  void goToFileBrowser(std::string path = {});
-  void goToLibrary();
-  void goToBrowser();
+  void goToFileBrowser(std::string path = {}, bool returnToReadMenu = false);
+  void goToLibrary(bool returnToReadMenu = false);
+  // initialTab is an index into the target screen's tab bar; the header cannot
+  // name those types without pulling the activities in. Out-of-range values are
+  // clamped to the first tab by PlannerScreenActivity::onEnter().
+  // selectTaskId, when non-empty, lands the screen on that specific task's row
+  // instead of row 0 -- see TasksActivity's own constructor comment.
+  void goToTasks(uint8_t initialTab = 0, std::string selectTaskId = "");  // 0 = first tab
+  void goToCalendar();
+  // Only reachable when ENABLE_BLE_NOTIFY_SPIKE is defined -- see
+  // BleNotifyRelay's own doc comment. HomeActivity never offers this tile
+  // otherwise, so no caller outside that build should ever invoke it.
+  void goToBleNotifications();
+  // Syncs every configured integration over one Wi-Fi association. onReturn
+  // reopens whichever screen's status bar this was reached from -- see
+  // SyncAllActivity's own comment; defaults to Home for a caller with no
+  // particular screen to return to.
+  void goToSyncAll(std::function<void()> onReturn = nullptr);
+  // Reopens Sync All after the silent restart it asked for when a step ran out of memory
+  // (see silentRestartToSyncAll()): the services in `alreadyDoneMask` are shown done and
+  // not run again, and it will not restart a second time.
+  void goToSyncAllResumed(uint32_t alreadyDoneMask);
+  void goToReadMenu();
+  void goToBrowser(bool returnToReadMenu = false);
   void goToReader(std::string path, bool allowFastInitialRefresh = false);
-  void goToSleep(bool fromTimeout = false);
+  void goToSleep(bool fromTimeout = false, bool forceQuickResume = false);
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();
   void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE, bool cleanInitialRefresh = false);
+  // Opens the companion screen (QuickPickActivity, the main screen's "Planner"
+  // tile) fresh -- also goToApp()'s AppId::Companion case.
+  void goToCompanion();
+  // Dispatches to whichever of the goTo* methods above opens `id`'s own
+  // screen -- the side Left/Right "previous/next app" shortcut every app
+  // screen has (see homeAppOrder::adjacentVisibleApp()) needs one call site
+  // that can take any app in the grid's own order, not a fixed pair.
+  void goToApp(homeAppOrder::AppId id);
 
   // This will move current activity to stack instead of deleting it
   void pushActivity(std::unique_ptr<Activity>&& activity);
@@ -104,6 +163,7 @@ class ActivityManager {
   bool preventAutoSleep() const;
   bool requiresExclusiveStorageLoop() const;
   bool isReaderActivity() const;
+  bool isQuickPickActivity() const;
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

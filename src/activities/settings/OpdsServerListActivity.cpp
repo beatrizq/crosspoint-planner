@@ -53,8 +53,10 @@ int OpdsServerListActivity::getItemCount() const {
 }
 
 OpdsServerListActivity::OpdsServerListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                                               const bool pickerMode)
-    : UiListActivity("OpdsServerList", renderer, mappedInput), pickerMode(pickerMode) {}
+                                               const bool pickerMode, const bool returnToReadMenu)
+    : UiListActivity("OpdsServerList", renderer, mappedInput),
+      pickerMode(pickerMode),
+      returnToReadMenu(returnToReadMenu) {}
 
 void OpdsServerListActivity::onEnter() {
   UiListActivity::onEnter();
@@ -108,7 +110,9 @@ bool OpdsServerListActivity::handleCustomInput() {
 }
 
 void OpdsServerListActivity::onBackButton() {
-  if (pickerMode) {
+  if (pickerMode && returnToReadMenu) {
+    activityManager.goToReadMenu();
+  } else if (pickerMode) {
     activityManager.goHome(HomeMenuItem::OPDS_BROWSER);
   } else {
     finish();

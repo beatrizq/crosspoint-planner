@@ -6,6 +6,7 @@
 
 #include "activities/UiListActivity.h"
 #include "components/OptionPopup.h"
+#include "components/StatusBand.h"
 
 class FileBrowserActivity final : public UiListActivity {
  public:
@@ -22,6 +23,18 @@ class FileBrowserActivity final : public UiListActivity {
   void deleteSelected();
 
   Mode mode = Mode::Books;
+  // When set, Back at the root returns to ReadMenuActivity instead of Home -- set only by
+  // ActivityManager::goToFileBrowser() on behalf of ReadMenuActivity.
+  bool returnToReadMenu = false;
+
+  // An extra stop ahead of the first row (and after the last), the same idiom the other browsing
+  // screens use -- Books mode only: a firmware/image picker is a narrow, single-purpose flow with no
+  // reason to reach Sync All from it. The top of the screen -- status bar, today's calendar events,
+  // the newest pending alert (see StatusBand) -- takes the place of the plain header there; while
+  // headerFocused, bandStop says which of them has focus.
+  bool headerFocused = false;
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
 
   // Files state
   std::string basepath = "/";
@@ -57,6 +70,7 @@ class FileBrowserActivity final : public UiListActivity {
   // root), and Confirm activates on release while a hold opens file actions.
   bool handleCustomInput() override;
   bool handleButtons() override;
+  void navigateButtons() override;
   // Header shows the current folder name (battery indicator via GUI.drawHeader);
   // footer labels depend on path depth and picker mode.
   void drawChrome() override;
@@ -69,7 +83,7 @@ class FileBrowserActivity final : public UiListActivity {
 
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
-                               Mode mode = Mode::Books);
+                               Mode mode = Mode::Books, bool returnToReadMenu = false);
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&& lock) override;

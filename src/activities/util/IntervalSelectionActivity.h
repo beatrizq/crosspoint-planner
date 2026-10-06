@@ -13,10 +13,13 @@ class GfxRenderer;
 
 class IntervalSelectionActivity final : public Activity, private UiAppHost {
  public:
+  // ignoreInitialConfirmRelease: the screen was opened with Select still held (it was the press that
+  // opened it), so that button's release must not confirm the dialog straight away.
   explicit IntervalSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* activityName,
                                      StrId titleId, int initialValue, int minValue, int maxValue, int smallStep,
                                      int largeStep, StrId valueFormatId = StrId::STR_NONE_OPT,
-                                     bool readerActivity = false, StrId maxBoundaryLabelId = StrId::STR_NONE_OPT);
+                                     bool readerActivity = false, bool ignoreInitialConfirmRelease = false,
+                                     StrId maxBoundaryLabelId = StrId::STR_NONE_OPT);
 
   void onEnter() override;
   void loop() override;
@@ -41,6 +44,7 @@ class IntervalSelectionActivity final : public Activity, private UiAppHost {
   int smallStep;
   int largeStep;
   bool readerActivity;
+  bool ignoreConfirmRelease;
   ButtonNavigator buttonNavigator;
 
   // Swallow the swipe/tap fallout of a slider drag so its release can't trigger

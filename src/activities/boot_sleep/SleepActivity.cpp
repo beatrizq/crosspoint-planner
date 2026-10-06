@@ -29,6 +29,7 @@
 #include "fontIds.h"
 #include "images/Logo120.h"
 #include "images/MoonIcon.h"
+#include "util/PlannerSleepScreen.h"
 
 namespace {
 
@@ -504,8 +505,10 @@ void releaseSdFontCachesForDecode(const GfxRenderer& renderer) {
 void SleepActivity::onEnter() {
   Activity::onEnter();
 
+  // Mirrors main.cpp's enterDeepSleep() own isQuickResumeSleep exactly -- this
+  // is that same sleep, rendering its own entry screen a moment later.
   const bool renderQuickResume =
-      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME || forceQuickResume ||
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
 
@@ -549,6 +552,16 @@ void SleepActivity::onEnter() {
     GUI.drawPopup(renderer, tr(STR_ENTERING_SLEEP));
   }
 
+  // "Invert sleep screen": every screen drawn below -- the custom/cover
+  // bitmaps, the default logo -- comes out rotated 180 degrees, because
+  // drawBitmap() and the other drawing calls all go through drawPixel(),
+  // which applies the renderer's orientation transform. Quick Resume returned
+  // above without drawing anything of its own: it just leaves the last page
+  // already on the panel, so there is nothing to rotate there.
+  if (SETTINGS.sleepScreenInvert) {
+    renderer.setOrientation(GfxRenderer::Orientation::PortraitInverted);
+  }
+
   switch (SETTINGS.sleepScreen) {
     case (CrossPointSettings::SLEEP_SCREEN_MODE::BLANK):
       return renderBlankSleepScreen();
@@ -568,17 +581,19 @@ void SleepActivity::onEnter() {
 }
 
 void SleepActivity::renderCustomSleepScreen() const {
-  // Look for sleep.bmp on the root of the sd card to determine if we should
-  // render a custom sleep screen instead of the default.
-  // This takes priority over the /sleep folder.
-  HalFile file;
-  if (Storage.openFileForRead("SLP", "/sleep.bmp", file)) {
+  // A wallpaper picked in the image viewer ("Set Cover") wins, then the user's
+  // own sleep_custom.bmp on the root of the sd card (sleep.bmp, its old name,
+  // still works) -- any of them takes priority over the /sleep folder. They are
+  // separate files so that picking a wallpaper never overwrites the user's own.
+  for (const char* path : {plannerSleepScreen::COVER_PATH, plannerSleepScreen::CUSTOM_PATH, "/sleep.bmp"}) {
+    HalFile file;
+    if (!Storage.openFileForRead("SLP", path, file)) continue;
     Bitmap bitmap(file, true,
                   renderer.grayscaleCapabilities(sleepGrayscaleMode(renderer)).supported() &&
                       display.getController() == HalDisplay::Controller::SSD1677 &&
                       SETTINGS.sleepScreenCoverFilter == CrossPointSettings::SLEEP_SCREEN_COVER_FILTER::NO_FILTER);
     if (bitmap.parseHeaders() == BmpReaderError::Ok) {
-      LOG_DBG("SLP", "Loading: /sleep.bmp");
+      LOG_DBG("SLP", "Loading: %s", path);
       renderBitmapSleepScreen(bitmap);
       file.close();
       return;
@@ -792,18 +807,17 @@ void SleepActivity::renderTransparentCustomSleepScreen() const {
 }
 
 void SleepActivity::renderCoverSleepScreen() const {
-  void (SleepActivity::*renderNoCoverSleepScreen)() const;
-  switch (SETTINGS.sleepScreen) {
-    case (CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM):
-      renderNoCoverSleepScreen = &SleepActivity::renderCustomSleepScreen;
-      break;
-    default:
-      renderNoCoverSleepScreen = &SleepActivity::renderDefaultSleepScreen;
-      break;
-  }
+  const bool useCustomFallback = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::COVER_CUSTOM;
+  auto renderNoCoverSleepScreen = [this, useCustomFallback] {
+    if (useCustomFallback) {
+      renderCustomSleepScreen();
+    } else {
+      renderDefaultSleepScreen();
+    }
+  };
 
   if (APP_STATE.openEpubPath.empty()) {
-    return (this->*renderNoCoverSleepScreen)();
+    return renderNoCoverSleepScreen();
   }
 
   // SSD absolute images use the new thresholds; other panels retain legacy tuning.
@@ -820,12 +834,12 @@ void SleepActivity::renderCoverSleepScreen() const {
     Xtc lastXtc(APP_STATE.openEpubPath, "/.crosspoint");
     if (!lastXtc.load()) {
       LOG_ERR("SLP", "Failed to load last XTC");
-      return (this->*renderNoCoverSleepScreen)();
+      return renderNoCoverSleepScreen();
     }
 
     if (!lastXtc.generateCoverBmp()) {
       LOG_ERR("SLP", "Failed to generate XTC cover bmp");
-      return (this->*renderNoCoverSleepScreen)();
+      return renderNoCoverSleepScreen();
     }
 
     coverBmpPath = lastXtc.getCoverBmpPath();
@@ -834,12 +848,12 @@ void SleepActivity::renderCoverSleepScreen() const {
     Txt lastTxt(APP_STATE.openEpubPath, "/.crosspoint");
     if (!lastTxt.load()) {
       LOG_ERR("SLP", "Failed to load last TXT");
-      return (this->*renderNoCoverSleepScreen)();
+      return renderNoCoverSleepScreen();
     }
 
     if (!lastTxt.generateCoverBmp()) {
       LOG_ERR("SLP", "No cover image found for TXT file");
-      return (this->*renderNoCoverSleepScreen)();
+      return renderNoCoverSleepScreen();
     }
 
     coverBmpPath = lastTxt.getCoverBmpPath();
@@ -849,17 +863,17 @@ void SleepActivity::renderCoverSleepScreen() const {
     // Skip loading css since we only need metadata here
     if (!lastEpub.load(true, true)) {
       LOG_ERR("SLP", "Failed to load last epub");
-      return (this->*renderNoCoverSleepScreen)();
+      return renderNoCoverSleepScreen();
     }
 
     if (!lastEpub.generateCoverBmp(cropped, originalThresholds)) {
       LOG_ERR("SLP", "Failed to generate cover bmp");
-      return (this->*renderNoCoverSleepScreen)();
+      return renderNoCoverSleepScreen();
     }
 
     coverBmpPath = lastEpub.getCoverBmpPath(cropped, originalThresholds);
   } else {
-    return (this->*renderNoCoverSleepScreen)();
+    return renderNoCoverSleepScreen();
   }
 
   HalFile file;
@@ -872,7 +886,7 @@ void SleepActivity::renderCoverSleepScreen() const {
     }
   }
 
-  return (this->*renderNoCoverSleepScreen)();
+  return renderNoCoverSleepScreen();
 }
 
 void SleepActivity::renderLastScreenSleepScreen() const {

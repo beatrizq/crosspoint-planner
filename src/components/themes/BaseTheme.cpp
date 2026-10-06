@@ -10,7 +10,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <numeric>
 #include <string>
+#include <vector>
 
 #include "I18n.h"
 #include "RecentBooksStore.h"
@@ -33,6 +35,29 @@ constexpr int bookmarkStatusIconWidth = 16;
 constexpr int bookmarkStatusIconHeight = 14;
 constexpr int bookmarkStatusIconGap = 4;
 constexpr int bookmarkStatusIconTopCrop = 2;
+
+// The side-button label boxes (drawSideButtonHints) and the geometry
+// getSideButtonHintsBottom() needs to say where they end.
+//
+// minButtonHeight is a box's floor: a short label doesn't shrink it below this,
+// and it is the length the physical button itself is taken to have. The
+// physical buttons don't move -- on the X3 the original minButtonHeight-tall
+// box started at y=155, so that is where its centre sits, and a taller box (a
+// longer label) grows symmetrically around that centre rather than downward
+// from 155, so the label stays centred on the button.
+constexpr int minButtonHeight = 80;
+constexpr int stackPadding = 8;       // Above and below the stacked letters, inside the border
+constexpr int stackLineAdvance = 20;  // Letter-to-letter distance (the font's own line height is 23)
+constexpr int x3ButtonCenterY = 155 + minButtonHeight / 2;
+
+// A box grows to fit its label's stacked letters (one per line, see
+// GfxRenderer::drawTextStacked) rather than staying a fixed height, so the
+// border always encloses the whole label. An empty label falls back to the
+// floor, which keeps the X4 layout where it was.
+int sideButtonBoxHeight(const GfxRenderer& renderer, const char* label) {
+  return std::max(minButtonHeight,
+                  renderer.getTextStackedHeight(SMALL_FONT_ID, label, stackLineAdvance) + 2 * stackPadding);
+}
 
 void drawBookmarkStatusIcon(const GfxRenderer& renderer, const int x, const int y) {
   constexpr int bytesPerRow = bookmarkStatusIconWidth / 8;
@@ -108,6 +133,23 @@ void BaseTheme::drawBatteryLeft(const GfxRenderer& renderer, Rect rect, const bo
   if (showPercentage) {
     const auto percentageText = std::to_string(percentage) + "%";
     renderer.drawText(SMALL_FONT_ID, rect.x + batteryPercentSpacing + rect.width, rect.y, percentageText.c_str());
+  }
+
+  const Rect iconRect{rect.x, y, rect.width, rect.height};
+  drawBatteryOutline(renderer, rect.x, y, rect.width, rect.height);
+  fillBatteryIcon(renderer, iconRect, percentage);
+}
+
+void BaseTheme::drawBatteryRight(const GfxRenderer& renderer, Rect rect, const bool showPercentage) const {
+  // Right aligned: percentage on left, icon on right (UI headers)
+  // rect.x is already positioned for the icon (drawHeader calculated it)
+  const uint16_t percentage = powerManager.getBatteryPercentage();
+  const int y = rect.y + 6;
+
+  if (showPercentage) {
+    const auto percentageText = std::to_string(percentage) + "%";
+    const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, percentageText.c_str());
+    renderer.drawText(SMALL_FONT_ID, rect.x - textWidth - batteryPercentSpacing, rect.y, percentageText.c_str());
   }
 
   const Rect iconRect{rect.x, y, rect.width, rect.height};
@@ -236,71 +278,197 @@ void BaseTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   renderer.setOrientation(orig_orientation);
 }
 
-void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+void BaseTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn,
+                                    const bool topSelected, const bool bottomSelected) const {
   if (gpio.hasTouch()) {
     return;
   }
 
   const int screenWidth = renderer.getScreenWidth();
   constexpr int buttonWidth = BaseMetrics::values.sideButtonHintsWidth;  // Width on screen (height when rotated)
-  constexpr int buttonHeight = 80;                                       // Height on screen (width when rotated)
   constexpr int buttonMargin = 4;
 
+  // A selected label is drawn inverted -- white letters on a black fill of the
+  // same shape as its border -- so it reads as the current choice.
   if (gpio.hasEdgeSideButtons()) {
-    // Edge-button layout (X3, X4 Pro): Up on left side, Down on right side, positioned higher
-    constexpr int x3ButtonY = 155;
+    // Edge-button layout (X3, X4 Pro): Up on left side, Down on right side, positioned higher --
+    // both boxes centred on x3ButtonCenterY (see its own comment above).
 
     if (topBtn != nullptr && topBtn[0] != '\0') {
+      const int height = sideButtonBoxHeight(renderer, topBtn);
       const int leftX = buttonMargin;
-      renderer.drawRect(leftX, x3ButtonY, buttonWidth, buttonHeight);
-      const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, topBtn);
-      const int textHeight = renderer.getTextHeight(SMALL_FONT_ID);
-      const int textX = leftX + (buttonWidth - textHeight) / 2;
-      const int textY = x3ButtonY + (buttonHeight + textWidth) / 2;
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, topBtn);
+      const int top = x3ButtonCenterY - height / 2;
+      if (topSelected) renderer.fillRect(leftX, top, buttonWidth, height);
+      renderer.drawRect(leftX, top, buttonWidth, height);
+      renderer.drawTextStacked(SMALL_FONT_ID, leftX + buttonWidth / 2, x3ButtonCenterY, topBtn, stackLineAdvance,
+                               /*black=*/!topSelected);
     }
 
     if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
+      const int height = sideButtonBoxHeight(renderer, bottomBtn);
       const int rightX = screenWidth - buttonMargin - buttonWidth;
-      renderer.drawRect(rightX, x3ButtonY, buttonWidth, buttonHeight);
-      const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, bottomBtn);
-      const int textHeight = renderer.getTextHeight(SMALL_FONT_ID);
-      const int textX = rightX + (buttonWidth - textHeight) / 2;
-      const int textY = x3ButtonY + (buttonHeight + textWidth) / 2;
-      renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, bottomBtn);
+      const int top = x3ButtonCenterY - height / 2;
+      if (bottomSelected) renderer.fillRect(rightX, top, buttonWidth, height);
+      renderer.drawRect(rightX, top, buttonWidth, height);
+      renderer.drawTextStacked(SMALL_FONT_ID, rightX + buttonWidth / 2, x3ButtonCenterY, bottomBtn, stackLineAdvance,
+                               /*black=*/!bottomSelected);
     }
   } else {
     // X4 layout: Both buttons stacked on right side
     constexpr int topButtonY = 345;
-    const char* labels[] = {topBtn, bottomBtn};
     const int x = screenWidth - buttonMargin - buttonWidth;
+    const int topHeight = sideButtonBoxHeight(renderer, topBtn);
+    const int bottomHeight = sideButtonBoxHeight(renderer, bottomBtn);
+    // The two boxes adjoin (no gap), sharing one border line where the first
+    // one's own (variable) height ends.
+    const int bottomTop = topButtonY + topHeight;
 
     if (topBtn != nullptr && topBtn[0] != '\0') {
+      if (topSelected) renderer.fillRect(x, topButtonY, buttonWidth, topHeight);
       renderer.drawLine(x, topButtonY, x + buttonWidth - 1, topButtonY);
-      renderer.drawLine(x, topButtonY, x, topButtonY + buttonHeight - 1);
-      renderer.drawLine(x + buttonWidth - 1, topButtonY, x + buttonWidth - 1, topButtonY + buttonHeight - 1);
+      renderer.drawLine(x, topButtonY, x, topButtonY + topHeight - 1);
+      renderer.drawLine(x + buttonWidth - 1, topButtonY, x + buttonWidth - 1, topButtonY + topHeight - 1);
+      renderer.drawTextStacked(SMALL_FONT_ID, x + buttonWidth / 2, topButtonY + topHeight / 2, topBtn, stackLineAdvance,
+                               /*black=*/!topSelected);
     }
 
     if ((topBtn != nullptr && topBtn[0] != '\0') || (bottomBtn != nullptr && bottomBtn[0] != '\0')) {
-      renderer.drawLine(x, topButtonY + buttonHeight, x + buttonWidth - 1, topButtonY + buttonHeight);
+      renderer.drawLine(x, bottomTop, x + buttonWidth - 1, bottomTop);
     }
 
     if (bottomBtn != nullptr && bottomBtn[0] != '\0') {
-      renderer.drawLine(x, topButtonY + buttonHeight, x, topButtonY + 2 * buttonHeight - 1);
-      renderer.drawLine(x + buttonWidth - 1, topButtonY + buttonHeight, x + buttonWidth - 1,
-                        topButtonY + 2 * buttonHeight - 1);
-      renderer.drawLine(x, topButtonY + 2 * buttonHeight - 1, x + buttonWidth - 1, topButtonY + 2 * buttonHeight - 1);
+      if (bottomSelected) renderer.fillRect(x, bottomTop, buttonWidth, bottomHeight);
+      renderer.drawLine(x, bottomTop, x, bottomTop + bottomHeight - 1);
+      renderer.drawLine(x + buttonWidth - 1, bottomTop, x + buttonWidth - 1, bottomTop + bottomHeight - 1);
+      renderer.drawLine(x, bottomTop + bottomHeight - 1, x + buttonWidth - 1, bottomTop + bottomHeight - 1);
+      renderer.drawTextStacked(SMALL_FONT_ID, x + buttonWidth / 2, bottomTop + bottomHeight / 2, bottomBtn,
+                               stackLineAdvance, /*black=*/!bottomSelected);
+    }
+  }
+}
+
+int BaseTheme::getSideButtonHintsBottom(const GfxRenderer& renderer, const char* topBtn, const char* bottomBtn) const {
+  // Only the edge-button boards (X3, X4 Pro) have the two buttons on opposite edges at one shared height, so
+  // only there is there a single line the content can sit below. The X4 stacks
+  // them one under the other on a single side, far lower down.
+  if (gpio.hasTouch() || !gpio.hasEdgeSideButtons()) {
+    return 0;
+  }
+  // Neither button has a label, so neither box is drawn and there is no line to
+  // sit below.
+  const bool noTop = topBtn == nullptr || topBtn[0] == '\0';
+  const bool noBottom = bottomBtn == nullptr || bottomBtn[0] == '\0';
+  if (noTop && noBottom) {
+    return 0;
+  }
+  const int tallest = std::max(sideButtonBoxHeight(renderer, topBtn), sideButtonBoxHeight(renderer, bottomBtn));
+  const int top = x3ButtonCenterY - tallest / 2;
+  return top + tallest;
+}
+
+int BaseTheme::getListRowStep(bool hasSubtitle) const {
+  int rowHeight = (hasSubtitle) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
+  return rowHeight;
+}
+
+int BaseTheme::getListPageItems(int contentHeight, bool hasSubtitle) const {
+  const int rowStep = getListRowStep(hasSubtitle);
+  if (rowStep <= 0) return 1;
+  return std::max(1, contentHeight / rowStep);
+}
+
+void BaseTheme::drawList(const GfxRenderer& renderer, Rect rect, int itemCount, int selectedIndex,
+                         const std::function<std::string(int index)>& rowTitle,
+                         const std::function<std::string(int index)>& rowSubtitle,
+                         const std::function<UIIcon(int index)>& rowIcon,
+                         const std::function<std::string(int index)>& rowValue, bool highlightValue,
+                         const std::function<bool(int index)>& rowDimmed) const {
+  int rowHeight =
+      (rowSubtitle != nullptr) ? BaseMetrics::values.listWithSubtitleRowHeight : BaseMetrics::values.listRowHeight;
+  int pageItems = rowHeight > 0 ? std::max(1, rect.height / rowHeight) : 1;
+
+  const int totalPages = (itemCount + pageItems - 1) / pageItems;
+  if (totalPages > 1) {
+    constexpr int indicatorWidth = 20;
+    constexpr int arrowSize = 6;
+    constexpr int margin = 15;  // Offset from right edge
+
+    const int centerX = rect.x + rect.width - indicatorWidth / 2 - margin;
+    const int indicatorTop = rect.y;  // Offset to avoid overlapping side button hints
+    const int indicatorBottom = rect.y + rect.height - arrowSize;
+
+    // Draw up arrow at top (^) - narrow point at top, wide base at bottom
+    for (int i = 0; i < arrowSize; ++i) {
+      const int lineWidth = 1 + i * 2;
+      const int startX = centerX - i;
+      renderer.drawLine(startX, indicatorTop + i, startX + lineWidth - 1, indicatorTop + i);
     }
 
-    for (int i = 0; i < 2; i++) {
-      if (labels[i] != nullptr && labels[i][0] != '\0') {
-        const int y = topButtonY + i * buttonHeight;
-        const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, labels[i]);
-        const int textHeight = renderer.getTextHeight(SMALL_FONT_ID);
-        const int textX = x + (buttonWidth - textHeight) / 2;
-        const int textY = y + (buttonHeight + textWidth) / 2;
-        renderer.drawTextRotated90CW(SMALL_FONT_ID, textX, textY, labels[i]);
+    // Draw down arrow at bottom (v) - wide base at top, narrow point at bottom
+    for (int i = 0; i < arrowSize; ++i) {
+      const int lineWidth = 1 + (arrowSize - 1 - i) * 2;
+      const int startX = centerX - (arrowSize - 1 - i);
+      renderer.drawLine(startX, indicatorBottom - arrowSize + 1 + i, startX + lineWidth - 1,
+                        indicatorBottom - arrowSize + 1 + i);
+    }
+  }
+
+  // Draw selection
+  int contentWidth = rect.width - 5;
+  if (selectedIndex >= 0) {
+    renderer.fillRect(rect.x, rect.y + selectedIndex % pageItems * rowHeight - 2, rect.width, rowHeight);
+  }
+  constexpr int minValueGap = 10;
+
+  // Draw all items
+  const auto pageStartIndex = selectedIndex / pageItems * pageItems;
+  for (int i = pageStartIndex; i < itemCount && i < pageStartIndex + pageItems; i++) {
+    const int itemY = rect.y + (i % pageItems) * rowHeight;
+
+    int rowTextWidth = contentWidth - BaseMetrics::values.contentSidePadding * 2;
+    std::string valueText;
+    if (rowValue != nullptr) {
+      valueText = rowValue(i);
+      if (!valueText.empty()) {
+        int maxValW = std::max(0, rowTextWidth - 40 - minValueGap);
+        valueText = renderer.truncatedText(UI_10_FONT_ID, valueText.c_str(), maxValW);
+        int valueWidth = renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str()) + minValueGap;
+        rowTextWidth -= valueWidth;
       }
+    }
+
+    auto itemName = rowTitle(i);
+    auto font = UI_10_FONT_ID;
+    auto item = renderer.truncatedText(font, itemName.c_str(), rowTextWidth);
+    renderer.drawText(font, rect.x + BaseMetrics::values.contentSidePadding, itemY, item.c_str(), i != selectedIndex);
+
+    // Apply checkerboard dither to create gray text effect for dimmed items
+    if (rowDimmed && rowDimmed(i) && i != selectedIndex) {
+      const int titleWidth = renderer.getTextWidth(font, item.c_str());
+      const int lineH = renderer.getLineHeight(font);
+      const int tx = rect.x + BaseMetrics::values.contentSidePadding;
+      for (int py = itemY; py < itemY + lineH; py++)
+        for (int px = tx; px < tx + titleWidth; px++)
+          if ((px + py) % 2 == 0) renderer.drawPixel(px, py, false);
+    }
+
+    if (rowSubtitle != nullptr) {
+      std::string subtitleText = rowSubtitle(i);
+      if (!subtitleText.empty()) {
+        auto subtitle = renderer.truncatedText(SMALL_FONT_ID, subtitleText.c_str(), rowTextWidth);
+        renderer.drawText(SMALL_FONT_ID, rect.x + BaseMetrics::values.contentSidePadding, itemY + 22, subtitle.c_str(),
+                          i != selectedIndex);
+      }
+    }
+
+    if (!valueText.empty()) {
+      const auto valueTextWidth = renderer.getTextWidth(UI_10_FONT_ID, valueText.c_str());
+      int valueY = itemY;
+      if (rowSubtitle != nullptr) {
+        valueY = itemY + 10;
+      }
+      renderer.drawText(UI_10_FONT_ID, rect.x + contentWidth - BaseMetrics::values.contentSidePadding - valueTextWidth,
+                        valueY, valueText.c_str(), i != selectedIndex);
     }
   }
 }
@@ -435,6 +603,45 @@ void BaseTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
   fui::header(ui.frame, band, props);
 }
 
+void BaseTheme::drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
+                                 const bool showRule, const bool includeStatusRow) const {
+  (void)showRule;  // This theme never draws a header rule to begin with.
+  int batteryX = rect.x + rect.width;
+  if (includeStatusRow) {
+    // Hide last battery draw
+    constexpr int maxBatteryWidth = 80;
+    renderer.fillRect(rect.x + rect.width - maxBatteryWidth, rect.y + 5, maxBatteryWidth,
+                      BaseMetrics::values.batteryHeight + 10, false);
+
+    const bool showBatteryPercentage =
+        SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+    // Position icon at right edge, drawBatteryRight will place text to the left
+    batteryX = rect.x + rect.width - 12 - BaseMetrics::values.batteryWidth;
+    drawBatteryRight(renderer,
+                     Rect{batteryX, rect.y + 5, BaseMetrics::values.batteryWidth, BaseMetrics::values.batteryHeight},
+                     showBatteryPercentage);
+  }
+
+  if (title) {
+    // No battery reserved when includeStatusRow is false -- the title gets
+    // the full width, just the usual side padding.
+    const int padding = includeStatusRow ? rect.width - batteryX + BaseMetrics::values.batteryWidth : 0;
+    auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title,
+                                                 rect.width - padding * 2 - BaseMetrics::values.contentSidePadding * 2,
+                                                 EpdFontFamily::BOLD);
+    renderer.drawCenteredText(UI_12_FONT_ID, rect.y + 5, truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
+  }
+
+  if (subtitle) {
+    auto truncatedSubtitle = renderer.truncatedText(
+        SMALL_FONT_ID, subtitle, rect.width - BaseMetrics::values.contentSidePadding * 2, EpdFontFamily::REGULAR);
+    int truncatedSubtitleWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedSubtitle.c_str());
+    renderer.drawText(SMALL_FONT_ID,
+                      rect.x + rect.width - BaseMetrics::values.contentSidePadding - truncatedSubtitleWidth, subtitleY,
+                      truncatedSubtitle.c_str(), true);
+  }
+}
+
 void BaseTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label, const char* rightLabel) const {
   constexpr int labelGap = 10;
   const int contentWidth = std::max(0, rect.width - BaseMetrics::values.contentSidePadding * 2);
@@ -454,6 +661,162 @@ void BaseTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char
                       true, EpdFontFamily::REGULAR);
   }
 }
+
+BaseTheme::TabWindow BaseTheme::tabWindow(const std::vector<int>& widths, int available, const int reserve,
+                                          const int active) {
+  const int count = static_cast<int>(widths.size());
+  if (count == 0) return TabWindow{0, 0, false, false};
+
+  const int total = std::accumulate(widths.begin(), widths.end(), 0);
+  if (total <= available) return TabWindow{0, count, false, false};
+
+  // Markers are only paid for once the tabs are known not to fit.
+  available -= reserve;
+
+  const int from = active < 0 ? 0 : (active >= count ? count - 1 : active);
+  int first = from;
+  int last = from;
+  // The active tab is in the window whether or not it fits on its own; a bar that
+  // dropped it would leave nothing highlighted.
+  int used = widths[static_cast<size_t>(from)];
+
+  for (bool grew = true; grew;) {
+    grew = false;
+    if (last + 1 < count && used + widths[static_cast<size_t>(last + 1)] <= available) {
+      used += widths[static_cast<size_t>(++last)];
+      grew = true;
+    }
+    if (first > 0 && used + widths[static_cast<size_t>(first - 1)] <= available) {
+      used += widths[static_cast<size_t>(--first)];
+      grew = true;
+    }
+  }
+
+  return TabWindow{first, last - first + 1, first > 0, last + 1 < count};
+}
+
+namespace {
+// Advance of one tab in the base bar: its label plus the gap that follows it.
+int baseTabAdvance(const GfxRenderer& renderer, const TabInfo& tab) {
+  return renderer.getTextWidth(UI_12_FONT_ID, tab.label, tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR) +
+         BaseMetrics::values.tabSpacing;
+}
+
+// Room the two overflow markers need, so the window math and the drawing agree.
+int baseMarkerReserve(const GfxRenderer& renderer) {
+  return renderer.getTextWidth(UI_12_FONT_ID, BaseTheme::TAB_MORE_BEFORE, EpdFontFamily::REGULAR) +
+         renderer.getTextWidth(UI_12_FONT_ID, BaseTheme::TAB_MORE_AFTER, EpdFontFamily::REGULAR) +
+         BaseMetrics::values.tabSpacing * 2;
+}
+}  // namespace
+
+void BaseTheme::drawTabBar(const GfxRenderer& renderer, const Rect rect, const std::vector<TabInfo>& tabs,
+                           bool selected) const {
+  constexpr int underlineHeight = 2;  // Height of selection underline
+  constexpr int underlineGap = 4;     // Gap between text and underline
+
+  if (tabs.empty()) return;
+
+  const int lineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+
+  std::vector<int> widths;
+  widths.reserve(tabs.size());
+  int active = 0;
+  for (size_t i = 0; i < tabs.size(); i++) {
+    widths.push_back(baseTabAdvance(renderer, tabs[i]));
+    if (tabs[i].selected) active = static_cast<int>(i);
+  }
+  const int available = rect.width - BaseMetrics::values.contentSidePadding * 2;
+  const TabWindow window = tabWindow(widths, available, baseMarkerReserve(renderer), active);
+
+  int currentX = rect.x + BaseMetrics::values.contentSidePadding;
+
+  if (window.moreBefore) {
+    renderer.drawText(UI_12_FONT_ID, currentX, rect.y, TAB_MORE_BEFORE, true, EpdFontFamily::REGULAR);
+    currentX +=
+        renderer.getTextWidth(UI_12_FONT_ID, TAB_MORE_BEFORE, EpdFontFamily::REGULAR) + BaseMetrics::values.tabSpacing;
+  }
+
+  for (int i = window.first; i < window.first + window.count; i++) {
+    const auto& tab = tabs[static_cast<size_t>(i)];
+    const int textWidth =
+        renderer.getTextWidth(UI_12_FONT_ID, tab.label, tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+
+    // Draw underline for selected tab
+    if (tab.selected) {
+      if (selected) {
+        renderer.fillRect(currentX - 3, rect.y, textWidth + 6, lineHeight + underlineGap);
+      } else {
+        renderer.fillRect(currentX, rect.y + lineHeight + underlineGap, textWidth, underlineHeight);
+      }
+    }
+
+    // Draw tab label
+    renderer.drawText(UI_12_FONT_ID, currentX, rect.y, tab.label, !(tab.selected && selected),
+                      tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+
+    currentX += textWidth + BaseMetrics::values.tabSpacing;
+  }
+
+  if (window.moreAfter) {
+    renderer.drawText(UI_12_FONT_ID, currentX, rect.y, TAB_MORE_AFTER, true, EpdFontFamily::REGULAR);
+  }
+}
+
+bool BaseTheme::tabIndexFromPoint(const GfxRenderer& renderer, const Rect rect, const std::vector<TabInfo>& tabs,
+                                  const int x, const int y, int& index) const {
+  if (tabs.empty() || y < rect.y || y >= rect.y + rect.height) {
+    return false;
+  }
+
+  // Measured and windowed exactly as drawTabBar does, so a tap lands on the tab
+  // that is actually under it once the bar is scrolled.
+  std::vector<int> widths;
+  widths.reserve(tabs.size());
+  int active = 0;
+  for (size_t i = 0; i < tabs.size(); i++) {
+    widths.push_back(baseTabAdvance(renderer, tabs[i]));
+    if (tabs[i].selected) active = static_cast<int>(i);
+  }
+  const int available = rect.width - BaseMetrics::values.contentSidePadding * 2;
+  const TabWindow window = tabWindow(widths, available, baseMarkerReserve(renderer), active);
+
+  int currentX = rect.x + BaseMetrics::values.contentSidePadding;
+
+  if (window.moreBefore) {
+    const int markerWidth = renderer.getTextWidth(UI_12_FONT_ID, TAB_MORE_BEFORE, EpdFontFamily::REGULAR);
+    // The marker steps the window one tab that way, so it is a control rather
+    // than dead space.
+    if (x >= rect.x && x < currentX + markerWidth) {
+      index = window.first - 1;
+      return true;
+    }
+    currentX += markerWidth + BaseMetrics::values.tabSpacing;
+  }
+
+  for (int i = window.first; i < window.first + window.count; i++) {
+    const auto& tab = tabs[static_cast<size_t>(i)];
+    const int textWidth =
+        renderer.getTextWidth(UI_12_FONT_ID, tab.label, tab.selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR);
+    const int left = (i == window.first && !window.moreBefore) ? rect.x : currentX - BaseMetrics::values.tabSpacing / 2;
+    const int right = currentX + textWidth + BaseMetrics::values.tabSpacing / 2;
+    if (x >= left && x < right) {
+      index = i;
+      return true;
+    }
+    currentX += textWidth + BaseMetrics::values.tabSpacing;
+  }
+
+  if (window.moreAfter && x >= currentX) {
+    index = window.first + window.count;
+    return true;
+  }
+
+  return false;
+}
+
+// Draw the "Recent Book" cover card on the home screen
+// TODO: Refactor method to make it cleaner, split into smaller methods
 
 // Draw the "Recent Book" cover card on the home screen
 // TODO: Refactor method to make it cleaner, split into smaller methods
@@ -717,6 +1080,32 @@ void BaseTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount
   }
 }
 
+int BaseTheme::getGridRowStep(int contentHeight, int buttonCount) const {
+  const int columns = BaseMetrics::values.homeGridColumns > 0 ? BaseMetrics::values.homeGridColumns : 1;
+  const int rows = (buttonCount + columns - 1) / columns;
+  if (rows <= 0) return contentHeight;
+  // The rows share the height rather than each taking a fixed slice of it, so
+  // two rows in a tall gap are spaced out instead of huddled at the top with
+  // room left for a row that does not exist.
+  const int step = contentHeight / rows;
+  return step > 0 ? step : contentHeight;
+}
+
+void BaseTheme::drawButtonGrid(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
+                               const std::function<std::string(int index)>& buttonLabel,
+                               const std::function<UIIcon(int index)>& rowIcon,
+                               const std::function<int(int index)>& /*badgeCount*/) const {
+  // A theme only draws tiles if it has artwork sized for them; the rest keep
+  // the rows they already had, which have no icon to badge in the first place.
+  drawButtonMenu(renderer, rect, buttonCount, selectedIndex, buttonLabel, rowIcon);
+}
+
+Rect BaseTheme::getGridTileIconRect(const GfxRenderer&, Rect, int, int) const {
+  // No grid, so no icon-sized square to overlay -- see this method's own
+  // header comment.
+  return Rect{};
+}
+
 Rect BaseTheme::drawPopup(const GfxRenderer& renderer, const char* message) const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int marginX = metrics.popupMarginX;
@@ -781,7 +1170,12 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
   renderer.getOrientedViewableTRBL(&orientedMarginTop, &orientedMarginRight, &orientedMarginBottom,
                                    &orientedMarginLeft);
   const auto sb = SETTINGS.statusBarSpec();
-  const bool showStatusBarTextLane = sb.textLaneVisible(halClock.isAvailable());
+  // Read once up front: textLaneVisible() needs to know whether the clock will
+  // actually be drawable (RTC or, on boards without one, a system clock already
+  // NTP-synced), and the draw below reuses the same result.
+  char clockTimeBuf[9];
+  const bool clockReady = sb.showsClock() && halClock.formatTime(clockTimeBuf, sizeof(clockTimeBuf), sb.clock12h);
+  const bool showStatusBarTextLane = sb.textLaneVisible(clockReady);
 
   // Draw Progress Text
   const auto screenHeight = renderer.getScreenHeight();
@@ -859,22 +1253,19 @@ void BaseTheme::drawStatusBar(GfxRenderer& renderer, const float bookProgress, c
     leftClusterWidth += batteryWidth;
   }
 
-  // Draw Clock (any board whose RTC probe succeeded)
-  if (sb.showsClock() && halClock.isAvailable()) {
-    char timeBuf[9];
-    if (halClock.formatTime(timeBuf, sizeof(timeBuf), sb.clock12h)) {
-      int clockTextWidth = renderer.getTextWidth(SMALL_FONT_ID, timeBuf);
-      int clockX = 0;
-      // Position to the left or right of the progress text (with a small gap)
-      if (sb.clockMode == CrossPointSettings::STATUS_BAR_CLOCK_LEFT) {
-        clockX = leftClusterX + leftClusterWidth + (leftClusterWidth > 0 ? 10 : 0);
-        leftClusterWidth += clockTextWidth + 10;
-      } else if (sb.clockMode == CrossPointSettings::STATUS_BAR_CLOCK_RIGHT) {
-        clockX = rightClusterX - rightClusterWidth - (rightClusterWidth > 0 ? 10 : 0) - clockTextWidth;
-        rightClusterWidth += clockTextWidth + 10;
-      }
-      renderer.drawText(SMALL_FONT_ID, clockX, textY, timeBuf);
+  // Draw Clock
+  if (clockReady) {
+    int clockTextWidth = renderer.getTextWidth(SMALL_FONT_ID, clockTimeBuf);
+    int clockX = 0;
+    // Position to the left or right of the progress text (with a small gap)
+    if (sb.clockMode == CrossPointSettings::STATUS_BAR_CLOCK_LEFT) {
+      clockX = leftClusterX + leftClusterWidth + (leftClusterWidth > 0 ? 10 : 0);
+      leftClusterWidth += clockTextWidth + 10;
+    } else if (sb.clockMode == CrossPointSettings::STATUS_BAR_CLOCK_RIGHT) {
+      clockX = rightClusterX - rightClusterWidth - (rightClusterWidth > 0 ? 10 : 0) - clockTextWidth;
+      rightClusterWidth += clockTextWidth + 10;
     }
+    renderer.drawText(SMALL_FONT_ID, clockX, textY, clockTimeBuf);
   }
 
   // Draw Bookmark

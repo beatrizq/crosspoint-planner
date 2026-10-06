@@ -16,6 +16,9 @@ class HalClock {
   mutable bool _hasCachedTime = false;
   mutable unsigned long _lastPollMs = 0;
 
+  // UTC epoch from the RTC (cached) or, without one, the system clock.
+  bool utcEpoch(time_t& out) const;
+
   static constexpr unsigned long CLOCK_POLL_MS = 10000;  // 10 seconds
 
  public:
@@ -30,18 +33,40 @@ class HalClock {
   // shows immediately.
   void setTimezone(const char* posixTz);
 
-  // Current wall-clock time in the configured timezone.
-  // Returns false if RTC is not available.
+  // Current wall-clock time in the configured timezone. On boards without a
+  // hardware RTC (the X3/X4 here) it comes from the system clock once SNTP has set it.
+  // Returns false if no usable time exists.
   bool localTime(struct tm& out) const;
 
   // Get current local hour (0-23) and minute (0-59).
-  // Returns false if RTC is not available.
+  // Returns false if no usable time exists.
   bool getTime(uint8_t& hour, uint8_t& minute) const;
+
+  // Full UTC wall-clock reading, including the calendar date.
+  //
+  // Unlike getTime() this is not shifted into the configured timezone: callers
+  // doing date arithmetic (streaks, the companion's mood) need a date that does
+  // not depend on a display setting. False until a usable clock exists.
+  bool getUtcDateTime(uint16_t& year, uint8_t& month, uint8_t& day, uint8_t& hour, uint8_t& minute) const;
+
+  // The configured timezone's current offset from UTC, in the quarter-hour units
+  // (biased by 48, so 48 == UTC+0, range 0..104) the planner's date and time
+  // maths use. DST-aware; 48 while the clock is unknown.
+  uint8_t utcOffsetQuarterHoursBiased() const;
 
   // Format the local time into a caller-provided buffer.
   // 24h mode produces "HH:MM" (needs >=6 bytes); 12h mode produces "H:MM AM"/"HH:MM PM" (needs >=9 bytes).
   // Returns false if RTC is not available.
   bool formatTime(char* buf, size_t bufSize, bool use12Hour = false) const;
+
+  // Same formatting/offset math as formatTime(), for an arbitrary UTC
+  // hour/minute rather than the current reading -- for a caller displaying a
+  // computed time (a countdown's end time) rather than "now". Same buffer
+  // sizing and offset convention as formatTime(); does not touch the RTC, so
+  // it needs no instance. Returns false (buf untouched) only if bufSize is
+  // too small.
+  static bool formatHourMinute(char* buf, size_t bufSize, uint8_t hour, uint8_t minute,
+                               uint8_t utcOffsetQuarterHoursBiased = 48, bool use12Hour = false);
 
   // Sync the RTC from an NTP server. Requires WiFi to be connected.
   // Blocks for up to ~5s while waiting for SNTP response.

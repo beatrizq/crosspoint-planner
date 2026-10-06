@@ -232,3 +232,25 @@ void utf8TruncateChars(std::string& str, const size_t numChars) {
     utf8RemoveLastChar(str);
   }
 }
+
+void utf8StripEmojiModifiers(char* text) {
+  if (text == nullptr) return;
+  const unsigned char* in = reinterpret_cast<const unsigned char*>(text);
+  unsigned char* out = reinterpret_cast<unsigned char*>(text);
+  while (*in != '\0') {
+    // 3-byte: U+FE0E/FE0F (EF B8 8E/8F), U+200D (E2 80 8D), U+20E3 (E2 83 A3)
+    const bool variationSelector = in[0] == 0xEF && in[1] == 0xB8 && (in[2] == 0x8E || in[2] == 0x8F);
+    const bool joiner = in[0] == 0xE2 && in[1] == 0x80 && in[2] == 0x8D;
+    const bool keycap = in[0] == 0xE2 && in[1] == 0x83 && in[2] == 0xA3;
+    // 4-byte: skin tones U+1F3FB..U+1F3FF (F0 9F 8F BB..BF)
+    const bool skinTone = in[0] == 0xF0 && in[1] == 0x9F && in[2] == 0x8F && in[3] >= 0xBB && in[3] <= 0xBF;
+    if (variationSelector || joiner || keycap) {
+      in += 3;
+    } else if (skinTone) {
+      in += 4;
+    } else {
+      *out++ = *in++;
+    }
+  }
+  *out = '\0';
+}

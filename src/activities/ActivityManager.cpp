@@ -5,6 +5,7 @@
 #include <FsHelpers.h>
 #include <HalDisplay.h>
 #include <HalPowerManager.h>
+#include <Logging.h>
 #include <Memory.h>
 #include <VectorFontSupport.h>
 
@@ -19,9 +20,18 @@
 #include "home/CrashActivity.h"
 #include "home/FileBrowserActivity.h"
 #include "home/HomeActivity.h"
+#include "home/MainMenuActivity.h"
+#include "home/QuickPickActivity.h"
+#include "home/ReadMenuActivity.h"
 #include "library/LibraryListActivity.h"
 #include "network/CrossPointWebServerActivity.h"
 #include "network/UsbDriveActivity.h"
+#ifdef ENABLE_BLE_NOTIFY_SPIKE
+#include "network/BleNotificationsActivity.h"
+#endif
+#include "planner/CalendarActivity.h"
+#include "planner/SyncAllActivity.h"
+#include "planner/TasksActivity.h"
 #include "reader/ReaderActivity.h"
 #include "settings/OpdsServerListActivity.h"
 #include "settings/SettingsActivity.h"
@@ -245,8 +255,8 @@ void ActivityManager::replaceActivity(std::unique_ptr<Activity>&& newActivity) {
   }
 }
 
-void ActivityManager::goToFileTransfer() {
-  replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput));
+void ActivityManager::goToFileTransfer(const FileTransferReturn returnTo) {
+  replaceActivity(std::make_unique<CrossPointWebServerActivity>(renderer, mappedInput, returnTo));
 }
 
 void ActivityManager::goToUsbDrive() {
@@ -264,12 +274,13 @@ void ActivityManager::goToUsbDrive() {
 
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
-void ActivityManager::goToFileBrowser(std::string path) {
-  replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path)));
+void ActivityManager::goToFileBrowser(std::string path, const bool returnToReadMenu) {
+  replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path),
+                                                        FileBrowserActivity::Mode::Books, returnToReadMenu));
 }
 
-void ActivityManager::goToLibrary() {
-  auto activity = makeUniqueNoThrow<LibraryListActivity>(renderer, mappedInput);
+void ActivityManager::goToLibrary(const bool returnToReadMenu) {
+  auto activity = makeUniqueNoThrow<LibraryListActivity>(renderer, mappedInput, returnToReadMenu);
   if (!activity) {
     LOG_ERR("ACT", "OOM: library activity");
     return;
@@ -277,13 +288,37 @@ void ActivityManager::goToLibrary() {
   replaceActivity(std::move(activity));
 }
 
-void ActivityManager::goToBrowser() {
+void ActivityManager::goToTasks(const uint8_t initialTab, std::string selectTaskId) {
+  replaceActivity(
+      std::make_unique<TasksActivity>(renderer, mappedInput, static_cast<int>(initialTab), std::move(selectTaskId)));
+}
+
+void ActivityManager::goToCalendar() { replaceActivity(std::make_unique<CalendarActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToSyncAll(std::function<void()> onReturn) {
+  replaceActivity(std::make_unique<SyncAllActivity>(renderer, mappedInput, std::move(onReturn)));
+}
+
+void ActivityManager::goToSyncAllResumed(const uint32_t alreadyDoneMask) {
+  replaceActivity(std::make_unique<SyncAllActivity>(renderer, mappedInput, nullptr, alreadyDoneMask,
+                                                    /*resumedAfterRestart=*/true));
+}
+
+#ifdef ENABLE_BLE_NOTIFY_SPIKE
+void ActivityManager::goToBleNotifications() {
+  replaceActivity(std::make_unique<BleNotificationsActivity>(renderer, mappedInput));
+}
+#endif
+
+void ActivityManager::goToReadMenu() { replaceActivity(std::make_unique<ReadMenuActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToBrowser(const bool returnToReadMenu) {
   const auto& servers = OPDS_STORE.getServers();
   // Skip the server picker when there's only one server configured
   if (servers.size() == 1) {
-    replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, servers[0]));
+    replaceActivity(std::make_unique<OpdsBookBrowserActivity>(renderer, mappedInput, servers[0], returnToReadMenu));
   } else {
-    replaceActivity(std::make_unique<OpdsServerListActivity>(renderer, mappedInput, true));
+    replaceActivity(std::make_unique<OpdsServerListActivity>(renderer, mappedInput, true, returnToReadMenu));
   }
 }
 
@@ -309,8 +344,8 @@ void ActivityManager::goToReader(std::string path, const bool allowFastInitialRe
   }
 }
 
-void ActivityManager::goToSleep(bool fromTimeout) {
-  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, fromTimeout));
+void ActivityManager::goToSleep(bool fromTimeout, bool forceQuickResume) {
+  replaceActivity(std::make_unique<SleepActivity>(renderer, mappedInput, fromTimeout, forceQuickResume));
   loop();  // Important: sleep screen must be rendered immediately, the caller will go to sleep right after this returns
 }
 
@@ -321,23 +356,49 @@ void ActivityManager::goToFullScreenMessage(std::string message, EpdFontFamily::
 }
 
 void ActivityManager::goHome(HomeMenuItem initialMenuItem, bool cleanInitialRefresh) {
-  if (initialMenuItem == HomeMenuItem::NONE && currentActivity) {
-    const auto& activityName = currentActivity->name;
-    if (activityName == "FileBrowser") {
-      initialMenuItem = HomeMenuItem::FILE_BROWSER;
-    } else if (activityName == "Library") {
-      initialMenuItem = HomeMenuItem::LIBRARY;
-    } else if (activityName == "OpdsBookBrowser") {
-      initialMenuItem = HomeMenuItem::OPDS_BROWSER;
-    } else if (activityName == "CrossPointWebServer") {
-      initialMenuItem = HomeMenuItem::FILE_TRANSFER;
-    } else if (activityName == "Settings") {
-      initialMenuItem = HomeMenuItem::SETTINGS_MENU;
-    }
-  }
-  replaceActivity(std::make_unique<HomeActivity>(renderer, mappedInput, initialMenuItem, cleanInitialRefresh));
+  // Home is the two-tile main screen now (see MainMenuActivity's own header
+  // comment), not the old app-tile grid -- HomeActivity is left fully intact but
+  // unreachable, so this is the one place that changed rather than every one of
+  // this function's 25+ callers. The main screen has no grid to preselect a tile
+  // on, so initialMenuItem (still passed by several callers, e.g.
+  // PlannerScreenActivity's own homeItem()) is simply ignored rather than
+  // plumbed through -- harmless, not broken.
+  (void)initialMenuItem;
+  (void)cleanInitialRefresh;
+  replaceActivity(std::make_unique<MainMenuActivity>(renderer, mappedInput));
 }
 void ActivityManager::goToCrashReport() { replaceActivity(std::make_unique<CrashActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToCompanion() { replaceActivity(std::make_unique<QuickPickActivity>(renderer, mappedInput)); }
+
+void ActivityManager::goToApp(const homeAppOrder::AppId id) {
+  switch (id) {
+    case homeAppOrder::AppId::Read:
+      goToReadMenu();
+      return;
+    case homeAppOrder::AppId::Tasks:
+      goToTasks();
+      return;
+    case homeAppOrder::AppId::Calendar:
+      goToCalendar();
+      return;
+    case homeAppOrder::AppId::Notifications:
+      // adjacentVisibleApp() already skips this app entirely when
+      // ENABLE_BLE_NOTIFY_SPIKE isn't compiled in, so this case is only ever
+      // reached in a build where goToBleNotifications() actually exists --
+      // see its own declaration comment.
+#ifdef ENABLE_BLE_NOTIFY_SPIKE
+      goToBleNotifications();
+#endif
+      return;
+    case homeAppOrder::AppId::Companion:
+      goToCompanion();
+      return;
+    case homeAppOrder::AppId::Settings:
+      goToSettings();
+      return;
+  }
+}
 
 void ActivityManager::pushActivity(std::unique_ptr<Activity>&& activity) {
   mappedInput.resetHomeButtonInput();
@@ -370,6 +431,12 @@ bool ActivityManager::isReaderActivity() const {
   return std::any_of(stackActivities.begin(), stackActivities.end(),
                      [](const auto& activity) { return activity->isReaderActivity(); }) ||
          (currentActivity && currentActivity->isReaderActivity());
+}
+
+bool ActivityManager::isQuickPickActivity() const {
+  return std::any_of(stackActivities.begin(), stackActivities.end(),
+                     [](const auto& activity) { return activity->isQuickPickActivity(); }) ||
+         (currentActivity && currentActivity->isQuickPickActivity());
 }
 
 bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }

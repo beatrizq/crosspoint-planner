@@ -13,6 +13,11 @@ enum class ScreenEdge : uint8_t;
 
 class MappedInputManager {
  public:
+  // Right1/Right2 and Left1/Left2 are the official IDs for the front button
+  // pairs, matching the physical layout: Left1/Left2 are the pair that moves
+  // focus up/down through a row list (Left1 = up, Left2 = down); Right1/Right2
+  // are the pair whose printed legend reads "Apps"/"Select" (Right1 = Back,
+  // i.e. the "Apps" button; Right2 = Confirm, i.e. "Select").
   enum class Button {
     Right1,
     Right2,

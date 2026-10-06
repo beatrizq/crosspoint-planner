@@ -14,6 +14,7 @@
 #include "CrossPointSettings.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/PlannerSleepScreen.h"
 
 namespace {
 constexpr char CUSTOM_SLEEP_ROOT_BMP[] = "/sleep.bmp";
@@ -239,38 +240,45 @@ void BmpViewerActivity::doSetSleepCover() {
   const bool transparentMode = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::TRANSPARENT_CUSTOM;
   if (!canSetSleepCover()) return;
 
-  const char* destination =
-      transparentMode ? (FsHelpers::hasPngExtension(filePath) ? TRANSPARENT_SLEEP_ROOT_PNG : TRANSPARENT_SLEEP_ROOT_BMP)
-                      : CUSTOM_SLEEP_ROOT_BMP;
-  bool success = filePath == destination;
+  if (!transparentMode) {
+    // The fork's own wallpaper slot (see PlannerSleepScreen.h), so picking an image here never overwrites
+    // a sleep_custom.bmp the user placed on the card.
+    const bool installed = plannerSleepScreen::installCustomWallpaper(filePath);
+    GUI.drawPopup(renderer, installed ? tr(STR_DONE) : tr(STR_FAILED_LOWER));
+  } else {
+    const char* destination = transparentMode ? (FsHelpers::hasPngExtension(filePath) ? TRANSPARENT_SLEEP_ROOT_PNG
+                                                                                      : TRANSPARENT_SLEEP_ROOT_BMP)
+                                              : CUSTOM_SLEEP_ROOT_BMP;
+    bool success = filePath == destination;
 
-  if (!success) {
-    auto buffer = makeUniqueNoThrow<uint8_t[]>(COPY_BUFFER_SIZE);
-    if (!buffer) {
-      LOG_ERR("BMP", "OOM: sleep cover copy buffer");
-    } else {
-      HalFile inFile, outFile;
-      if (Storage.openFileForRead("BMP", filePath, inFile) && Storage.openFileForWrite("BMP", destination, outFile)) {
-        int bytesRead;
-        success = true;
-        while ((bytesRead = inFile.read(buffer.get(), COPY_BUFFER_SIZE)) > 0) {
-          if (outFile.write(buffer.get(), static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
-            success = false;
-            break;
+    if (!success) {
+      auto buffer = makeUniqueNoThrow<uint8_t[]>(COPY_BUFFER_SIZE);
+      if (!buffer) {
+        LOG_ERR("BMP", "OOM: sleep cover copy buffer");
+      } else {
+        HalFile inFile, outFile;
+        if (Storage.openFileForRead("BMP", filePath, inFile) && Storage.openFileForWrite("BMP", destination, outFile)) {
+          int bytesRead;
+          success = true;
+          while ((bytesRead = inFile.read(buffer.get(), COPY_BUFFER_SIZE)) > 0) {
+            if (outFile.write(buffer.get(), static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
+              success = false;
+              break;
+            }
           }
+          if (bytesRead < 0) success = false;
+          outFile.close();
         }
-        if (bytesRead < 0) success = false;
-        outFile.close();
       }
     }
-  }
 
-  if (success) {
-    if (!transparentMode) SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
-    SETTINGS.saveToFile();
-    GUI.drawPopup(renderer, tr(STR_DONE));
-  } else {
-    GUI.drawPopup(renderer, tr(STR_FAILED_LOWER));
+    if (success) {
+      if (!transparentMode) SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
+      SETTINGS.saveToFile();
+      GUI.drawPopup(renderer, tr(STR_DONE));
+    } else {
+      GUI.drawPopup(renderer, tr(STR_FAILED_LOWER));
+    }
   }
 
   delay(1000);

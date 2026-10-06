@@ -1,0 +1,2 @@
+# Enum + persisted-id order. Append only: reordering invalidates saved choices.
+pancake

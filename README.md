@@ -21,6 +21,9 @@ Check [our Devices page](https://crosspointreader.com/devices) for the full list
 - **Various formats**: native handling for `.epub`, `.xtc/.xtch`, `.txt`, and `.bmp`.
 
 - **Touch reading**: follow EPUB links and look up words in the dictionary on touch-enabled devices.
+- **Todoist**: today's tasks and overdue count on the device, complete them with a button, offline completion queue, and an optional task-list sleep screen ([docs](docs/todoist.md)).
+
+- **YNAB**: the balances of the budget categories you pick, on the Planner's Budget tab ([docs](docs/ynab.md)).
 
 - **Screenshots.**
 

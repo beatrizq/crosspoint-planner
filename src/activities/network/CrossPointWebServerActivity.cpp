@@ -16,6 +16,7 @@
 #include "activities/network/CalibreConnectActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "network/BleNotifyRelay.h"
 #include "util/QrUtils.h"
 #include "util/TaskWatchdog.h"
 
@@ -90,11 +91,25 @@ void CrossPointWebServerActivity::onEnter() {
   startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) {
                            if (result.isCancelled) {
-                             onGoHome();
+                             exitActivity();
                            } else {
                              onNetworkModeSelected(std::get<NetworkModeResult>(result.data).mode);
                            }
                          });
+}
+
+void CrossPointWebServerActivity::exitActivity() {
+  switch (returnTo) {
+    case FileTransferReturn::ReadMenu:
+      activityManager.goToReadMenu();
+      break;
+    case FileTransferReturn::Settings:
+      activityManager.goToSettings();
+      break;
+    case FileTransferReturn::Home:
+      onGoHome();
+      break;
+  }
 }
 
 void CrossPointWebServerActivity::onExit() {
@@ -151,7 +166,7 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
           startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
                                  [this](const ActivityResult& result) {
                                    if (result.isCancelled) {
-                                     onGoHome();
+                                     exitActivity();
                                    } else {
                                      onNetworkModeSelected(std::get<NetworkModeResult>(result.data).mode);
                                    }
@@ -161,7 +176,15 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
   }
 
   if (mode == NetworkMode::JOIN_NETWORK) {
-    // STA mode - launch WiFi selection
+    // STA mode - launch WiFi selection. Past this point every path uses
+    // WiFi, so onExit() owes a teardown. Free NimBLE's ~55KB init-time heap
+    // reservation before WiFi/TLS need their own headroom -- no matching
+    // resume(): onExit() below always reboots once WiFi's mode is non-null,
+    // and BleNotifyRelay::begin() re-advertises fresh on the next boot.
+    // (CONNECT_CALIBRE above delegates to CalibreConnectActivity, which
+    // pauses on its own; CREATE_HOTSPOT below is SoftAP-only, no station-mode
+    // WiFi driver or outbound TLS, so it is left out of this.)
+    BleNotifyRelay::pause();
     LOG_DBG("WEBACT", "Turning on WiFi (STA mode)...");
     WiFi.mode(WIFI_STA);
 
@@ -203,7 +226,7 @@ void CrossPointWebServerActivity::onWifiSelectionComplete(const bool connected) 
     startActivityForResult(std::make_unique<NetworkModeSelectionActivity>(renderer, mappedInput),
                            [this](const ActivityResult& result) {
                              if (result.isCancelled) {
-                               onGoHome();
+                               exitActivity();
                              } else {
                                onNetworkModeSelected(std::get<NetworkModeResult>(result.data).mode);
                              }
@@ -230,7 +253,7 @@ void CrossPointWebServerActivity::startAccessPoint() {
 
   if (!apStarted) {
     LOG_ERR("WEBACT", "ERROR: Failed to start Access Point!");
-    onGoHome();
+    exitActivity();
     return;
   }
 
@@ -291,7 +314,7 @@ void CrossPointWebServerActivity::startWebServer() {
     LOG_ERR("WEBACT", "ERROR: Failed to start web server!");
     webServer.reset();
     // Go back on error
-    onGoHome();
+    exitActivity();
   }
 }
 
@@ -309,7 +332,7 @@ void CrossPointWebServerActivity::loop() {
       if (millis() - lastWifiCheck > 2000) {  // Check every 2 seconds
         lastWifiCheck = millis();
         const wl_status_t wifiStatus = WiFi.status();
-        // Driver auto-reconnect handles retries; abandon (via onGoHome) only
+        // Driver auto-reconnect handles retries; abandon (via exitActivity) only
         // after WIFI_ABANDON_MS, otherwise the activity freezes on a blip.
         bool repaint = false;
         if (wifiStatus != WL_CONNECTED) {
@@ -323,7 +346,7 @@ void CrossPointWebServerActivity::loop() {
           if (millis() - firstDisconnectAt > WIFI_ABANDON_MS) {
             LOG_DBG("WEBACT", "WiFi unavailable for >%lu s; returning to network selection", WIFI_ABANDON_MS / 1000UL);
             state = WebServerActivityState::SHUTTING_DOWN;
-            onGoHome();
+            exitActivity();
             return;
           }
         } else {
@@ -374,10 +397,10 @@ void CrossPointWebServerActivity::loop() {
           yield();
           // Pump input inside this blocking loop so exit events remain responsive.
           mappedInput.update(true);
-          // Home remains available now; other configured actions are deferred
-          // to the next main-loop pass.
+          // Exit on the Back *release* (and the Home gesture): acting on the press would open the
+          // screen we return to with Back still held, and its release would land there as a second Back.
           if (mappedInput.wasReleased(MappedInputManager::Button::Right1) || mappedInput.wasHomeGesture()) {
-            onGoHome();
+            exitActivity();
             return;
           }
         }
@@ -387,7 +410,7 @@ void CrossPointWebServerActivity::loop() {
 
     // Also check outside the request-processing loop.
     if (mappedInput.wasReleased(MappedInputManager::Button::Right1) || mappedInput.wasHomeGesture()) {
-      onGoHome();
+      exitActivity();
       return;
     }
   }
@@ -493,7 +516,8 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     renderer.drawCenteredText(SMALL_FONT_ID, startY, hostnameUrl.c_str(), true);
   }
 
-  const auto labels = mappedInput.mapLabels(tr(STR_EXIT), "", "", "");
+  const auto labels =
+      mappedInput.mapLabels(returnTo != FileTransferReturn::Home ? tr(STR_BACK) : tr(STR_EXIT), "", "", "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 }
 

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <BoardConfig.h>
-#include <HalClock.h>
 #include <HalTiltSensor.h>
 #include <I18n.h>
 #include <SdCardFontRegistry.h>
@@ -236,6 +235,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
                           {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
                           StrId::STR_CAT_DISPLAY),
+        SettingInfo::Toggle(StrId::STR_INVERT_SLEEP_SCREEN, &CrossPointSettings::sleepScreenInvert, "sleepScreenInvert",
+                            StrId::STR_CAT_DISPLAY),
+        SettingInfo::Enum(StrId::STR_PLANNER_FONT_SIZE, &CrossPointSettings::plannerFontSize,
+                          {StrId::STR_SIZE_SMALL, StrId::STR_SIZE_LARGE}, "plannerFontSize", StrId::STR_CAT_PLANNER),
         SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
                           {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}, "hideBatteryPercentage",
                           StrId::STR_CAT_DISPLAY),
@@ -255,6 +258,35 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         // applies it to every activity), so it lives in the Display category.
         SettingInfo::Toggle(StrId::STR_NIGHT_MODE, &CrossPointSettings::screenInverted, "screenInverted",
                             StrId::STR_CAT_DISPLAY),
+
+        // --- Companion (persisted here, rendered by its own dedicated screen) ---
+        // The companion's screen is Home (see ActivityManager::goHome()), so it is
+        // always there; showCompanion only hides the figure and its bubble on it.
+        SettingInfo::Toggle(StrId::STR_SHOW_COMPANION, &CrossPointSettings::showCompanion, "showCompanion",
+                            StrId::STR_COMPANION),
+        // Sleep window, local wall-clock time -- rendered on-device as two HH:MM
+        // rows (CompanionSettingsActivity), but persisted here as four plain
+        // bytes since that is what toJson()/fromJson() walk by key.
+        SettingInfo::Value(StrId::STR_COMPANION_SLEEP_START_HOUR, &CrossPointSettings::companionSleepStartHour,
+                           {0, 23, 1}, "companionSleepStartHour", StrId::STR_COMPANION),
+        SettingInfo::Value(StrId::STR_COMPANION_SLEEP_START_MINUTE, &CrossPointSettings::companionSleepStartMinute,
+                           {0, 59, 1}, "companionSleepStartMinute", StrId::STR_COMPANION),
+        SettingInfo::Value(StrId::STR_COMPANION_SLEEP_END_HOUR, &CrossPointSettings::companionSleepEndHour, {0, 23, 1},
+                           "companionSleepEndHour", StrId::STR_COMPANION),
+        // Mood ladder tuning. Independent per-field ranges are all the generic
+        // toJson()/fromJson() loop can enforce -- the satisfiedPoints < happyPoints <
+        // amazedPoints cross-field constraints can't be expressed here, so
+        // CompanionTracker clamps again defensively wherever these are read.
+        SettingInfo::Value(StrId::STR_COMPANION_AMAZED_AT, &CrossPointSettings::companionAmazedPoints, {2, 30, 1},
+                           "companionAmazedPoints", StrId::STR_COMPANION),
+        SettingInfo::Value(StrId::STR_COMPANION_HAPPY_AT, &CrossPointSettings::companionHappyPoints, {1, 20, 1},
+                           "companionHappyPoints", StrId::STR_COMPANION),
+        SettingInfo::Value(StrId::STR_COMPANION_SATISFIED_AT, &CrossPointSettings::companionSatisfiedPoints, {1, 20, 1},
+                           "companionSatisfiedPoints", StrId::STR_COMPANION),
+        SettingInfo::Value(StrId::STR_COMPANION_NEGLECTED_AFTER, &CrossPointSettings::companionNeglectedDays,
+                           {1, 14, 1}, "companionNeglectedDays", StrId::STR_COMPANION),
+        SettingInfo::Value(StrId::STR_COMPANION_SLEEP_END_MINUTE, &CrossPointSettings::companionSleepEndMinute,
+                           {0, 59, 1}, "companionSleepEndMinute", StrId::STR_COMPANION),
 
         // --- Reader ---
         // Built-in font-family entry. Replaced per-call with a registry-aware
@@ -349,13 +381,13 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
 #if FREEINK_CAP_TOUCH
         SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
                           {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
-                           StrId::STR_FOOTNOTES, StrId::STR_CONFIRM},
+                           StrId::STR_FOOTNOTES, StrId::STR_QUICK_RESUME, StrId::STR_CONFIRM},
                           "shortPwrBtn", StrId::STR_CAT_CONTROLS),
 #else
-        SettingInfo::Enum(
-            StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
-            {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH, StrId::STR_FOOTNOTES},
-            "shortPwrBtn", StrId::STR_CAT_CONTROLS),
+        SettingInfo::Enum(StrId::STR_SHORT_PWR_BTN, &CrossPointSettings::shortPwrBtn,
+                          {StrId::STR_IGNORE, StrId::STR_SLEEP, StrId::STR_PAGE_TURN, StrId::STR_FORCE_REFRESH,
+                           StrId::STR_FOOTNOTES, StrId::STR_QUICK_RESUME},
+                          "shortPwrBtn", StrId::STR_CAT_CONTROLS),
 #endif
         // Erased below unless the QMI8658 IMU is present (X3).
         SettingInfo::Enum(StrId::STR_TILT_PAGE_TURN, &CrossPointSettings::tiltPageTurn,
@@ -371,14 +403,30 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             StrId::STR_TIME_TO_SLEEP, &CrossPointSettings::sleepTimeoutMinutes,
             {CrossPointSettings::MIN_SLEEP_TIMEOUT_MINUTES, CrossPointSettings::MAX_SLEEP_TIMEOUT_MINUTES, 1},
             "sleepTimeoutMinutes", StrId::STR_CAT_SYSTEM),
+
+        // --- Library ---
         SettingInfo::Toggle(StrId::STR_SHOW_HIDDEN_FILES, &CrossPointSettings::showHiddenFiles, "showHiddenFiles",
                             StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_LIBRARY_USE_METADATA, &CrossPointSettings::libraryUseMetadata,
                             "libraryUseMetadata", StrId::STR_CAT_SYSTEM),
         SettingInfo::Toggle(StrId::STR_REMOVE_READ_FROM_RECENTS, &CrossPointSettings::removeReadBooksFromRecents,
-                            "removeReadBooksFromRecents", StrId::STR_CAT_SYSTEM),
+                            "removeReadBooksFromRecents", StrId::STR_CAT_LIBRARY),
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
-                            "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
+                            "moveFinishedToReadFolder", StrId::STR_CAT_LIBRARY),
+
+        // Per-app nicknames: persisted + web-exposed, category-less so they stay
+        // out of the on-device Settings list (edited from each app's own screen).
+        SettingInfo::String(StrId::STR_NICKNAME, &SETTINGS.tasksNickname[0], sizeof(SETTINGS.tasksNickname),
+                            "tasksNickname"),
+        SettingInfo::String(StrId::STR_NICKNAME, &SETTINGS.calendarNickname[0], sizeof(SETTINGS.calendarNickname),
+                            "calendarNickname"),
+        SettingInfo::String(StrId::STR_NICKNAME, &SETTINGS.companionNickname[0], sizeof(SETTINGS.companionNickname),
+                            "companionNickname"),
+
+        // Home grid app order: persisted + web-exposed, category-less so it is
+        // hidden from the on-device Settings screen (edited from App Order).
+        SettingInfo::String(StrId::STR_APP_ORDER, &SETTINGS.homeAppOrder[0], sizeof(SETTINGS.homeAppOrder),
+                            "homeAppOrder"),
 
         // OPDS download folder: persisted + web-exposed, but category-less so it
         // is hidden from the on-device Settings screen (edited via OPDS UI).

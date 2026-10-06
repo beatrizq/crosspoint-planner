@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <BoardConfig.h>
+#include <CivilTime.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
 #include <FontDecompressor.h>
@@ -25,18 +26,31 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "GCalStore.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "TodoistStore.h"
+#include "TodoistTaskCache.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/home/CompanionSessionActivity.h"
+#include "activities/home/FocusSessionActivity.h"
+#include "activities/home/QuickPickActivity.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
+#include "companion/CompanionState.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "images/LoadingIcon.h"
+#include "network/BleNotifyRelay.h"
 #include "platform/UsbSerialJtagHandoff.h"
+#ifdef ENABLE_BLE_NOTIFY_SPIKE
+#include "network/BleNotificationQueue.h"
+#endif
 #include "util/ButtonNavigator.h"
+#include "util/PlannerSync.h"
 #include "util/ScreenshotUtil.h"
 #include "util/Timezones.h"
 
@@ -137,11 +151,13 @@ EpdFontFamily ui12FontFamily(&ui12RegularFont, &ui12BoldFont);
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
 RTC_NOINIT_ATTR uint32_t silentRebootTarget;
 RTC_NOINIT_ATTR uint32_t silentRebootPayload;
+RTC_NOINIT_ATTR uint32_t silentRebootSyncDone;  // services already done, when the target is SYNC
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
 constexpr uint32_t SILENT_REBOOT_TARGET_SETTINGS = 2;
-constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_SETTINGS;
+constexpr uint32_t SILENT_REBOOT_TARGET_SYNC = 3;
+constexpr uint32_t SILENT_REBOOT_TARGET_MAX = SILENT_REBOOT_TARGET_SYNC;
 constexpr uint32_t SILENT_REBOOT_LIGHT_ON = 1U << 0;
 
 // How the device is coming back to life, resolved once at boot. Both resume
@@ -205,6 +221,24 @@ void restartToHomeAfterStorageHandoff() {
   ESP.restart();
 }
 
+void silentRestartToSyncAll(const uint32_t doneMask) {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  armSilentReboot(SILENT_REBOOT_TARGET_SYNC);
+  silentRebootSyncDone = doneMask;
+  LOG_INF("MAIN", "Silent restart (target=sync, done mask %u)", static_cast<unsigned>(doneMask));
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void waitForPowerRelease() {
+  gpio.update();
+  while (gpio.isPressed(HalGPIO::BTN_POWER)) {
+    delay(50);
+    gpio.update();
+  }
+}
+
 void toggleFrontlight() {
   if (!Frontlight.present()) return;
   const bool lightOn = !Frontlight.isOn();
@@ -258,13 +292,17 @@ static bool loadSleepFrameBuffer() {
   return true;
 }
 
-// Enter deep sleep mode
-void enterDeepSleep(bool fromTimeout = false) {
+// Enter deep sleep mode. forceQuickResume: the release-triggered short-press
+// branch below passes true, since a genuine short press means Quick Resume
+// regardless of fromTimeout/quickResumeSleepScreen -- those two only ever decide
+// the automatic, inactivity-timeout case.
+void enterDeepSleep(bool fromTimeout = false, bool forceQuickResume = false) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
   APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  APP_STATE.lastSleepFromQuickPick = activityManager.isQuickPickActivity();
 
   const bool isQuickResumeSleep =
-      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
+      SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME || forceQuickResume ||
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
   // Every sleep mode leaves a complete retained frame on the e-ink panel. Keep
@@ -276,7 +314,7 @@ void enterDeepSleep(bool fromTimeout = false) {
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
-  activityManager.goToSleep(fromTimeout);
+  activityManager.goToSleep(fromTimeout, forceQuickResume);
 
   if (isQuickResumeSleep) {
     saveSleepFrameBuffer();
@@ -372,9 +410,11 @@ void setup() {
   const uint32_t snapshotTarget =
       (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_MAX) ? silentRebootTarget : 0;
   const bool silentRebootLightOn = isSilentReboot && (silentRebootPayload & SILENT_REBOOT_LIGHT_ON) != 0;
+  const uint32_t snapshotSyncDone = (snapshotTarget == SILENT_REBOOT_TARGET_SYNC) ? silentRebootSyncDone : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
   silentRebootPayload = 0;
+  silentRebootSyncDone = 0;
 
   gpio.begin();
   powerManager.begin();
@@ -437,6 +477,42 @@ void setup() {
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
+  TODOIST_STORE.loadFromFile();
+  GCAL_STORE.loadFromFile();
+  // Loaded unconditionally, not just when the companion is enabled: a wake from
+  // deep sleep re-runs setup(), so gating on the setting means turning the
+  // companion off, waking, then back on leaves the in-memory ledger at defaults
+  // — and the next save overwrites a real streak with zeroes. Missing file on
+  // first run is expected and leaves the defaults in place.
+  COMPANION_STATE.loadFromFile();
+  // The companion's mood is derived live from this cache (today's completed
+  // tasks), not from anything banked in CompanionState. Without this, Home
+  // would show a default-constructed (empty) count on every fresh boot until
+  // the user happened to open Tasks, the only other caller of loadFromFile()
+  // on it -- making the mood look reset even though nothing was actually lost.
+  TODOIST_TASKS.loadFromFile();
+  // Retires a day-old completion log before the companion ever reads it this
+  // boot, using whatever the clock already knows -- no WiFi/NTP forced here,
+  // since boot must not block on the network. This is what catches the
+  // common case (the device sat in deep sleep and its clock tracked the days
+  // correctly the whole time); plannerSync::runTasks() covers
+  // the other case, where the clock itself was only wrong until a sync
+  // corrected it. See TodoistTaskCache::clearCompletedIfStale()'s own
+  // comment for what this is protecting against.
+  {
+    uint16_t year;
+    uint8_t month, day, hour, minute;
+    if (halClock.getUtcDateTime(year, month, day, hour, minute)) {
+      TODOIST_TASKS.clearCompletedIfStale(
+          civil::dateFromIso(plannerSync::localIsoDateFromUtc(year, month, day, hour, minute).c_str()));
+    }
+  }
+#ifdef ENABLE_BLE_NOTIFY_SPIKE
+  // Same reasoning as the caches above: SyncAllActivity reboots on exit
+  // whenever WiFi was activated, so this must be loaded at boot rather than
+  // relying on whatever was in RAM before the reboot.
+  BLE_NOTIFICATIONS.loadFromFile();
+#endif
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
@@ -542,13 +618,43 @@ void setup() {
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SETTINGS) {
     // Back out of the WiFi rows and the user is where they left off, not on Home.
     activityManager.goToSettings();
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SYNC) {
+    // Sync All ran out of memory part-way and restarted to clear it: pick the run up
+    // again, with the services that already finished marked done.
+    activityManager.goToSyncAllResumed(snapshotSyncDone);
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
-    // through to the sleep-wake "resume reader" logic, which fires on stale
-    // openEpubPath + lastSleepFromReader from a prior session.
+    // through to the sleep-wake "resume reader"/"resume quick-pick" logic
+    // below, which fires on stale flags from a prior session.
     activityManager.goHome();
+  } else if (APP_STATE.focusSessionActive) {
+    // No Back-held escape hatch here, unlike the branches below: a focus
+    // session is a deliberate commitment device (see FocusSessionActivity),
+    // and letting a reboot bypass it the same way the reader/quick-pick
+    // resumes do would make a reboot a free way around it. Whether the lock
+    // is actually still in effect (versus having quietly finished while the
+    // device was off) is resolved by FocusSessionActivity's own onEnter()
+    // against the wall clock, not here.
+    activityManager.replaceActivity(std::make_unique<FocusSessionActivity>(
+        renderer, mappedInputManager, APP_STATE.focusSessionText, APP_STATE.focusSessionItemId,
+        APP_STATE.focusSessionEndAbsMinutes, APP_STATE.focusSessionEndHour, APP_STATE.focusSessionEndMinute));
+  } else if (APP_STATE.companionSessionActive) {
+    // Same reasoning as the focus-session branch above, for a Companion
+    // screen Focus/Break session instead of a task-linked one (see
+    // CompanionSessionActivity) -- no Back-held escape hatch, and whether
+    // the lock is actually still in effect is resolved by
+    // CompanionSessionActivity's own onEnter() against the wall clock.
+    activityManager.replaceActivity(std::make_unique<CompanionSessionActivity>(
+        renderer, mappedInputManager, static_cast<companion::Mood>(APP_STATE.companionSessionMood),
+        APP_STATE.companionSessionEndAbsMinutes, APP_STATE.companionSessionEndHour,
+        APP_STATE.companionSessionEndMinute));
+  } else if (APP_STATE.lastSleepFromQuickPick && !mappedInputManager.isPressed(MappedInputManager::Button::Right1)) {
+    // Same escape hatch as the reader branch below: holding Back on wake skips
+    // straight to home instead of reopening the companion screen.
+    activityManager.replaceActivity(std::make_unique<QuickPickActivity>(renderer, mappedInputManager));
   } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
-             mappedInputManager.isPressed(MappedInputManager::Button::Right1) || APP_STATE.readerActivityLoadCount > 0) {
+             mappedInputManager.isPressed(MappedInputManager::Button::Right1) ||
+             APP_STATE.readerActivityLoadCount > 0) {
     // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
     // crashed (indicated by readerActivityLoadCount > 0)
     activityManager.goHome(HomeMenuItem::NONE, needsWakeRefresh);
@@ -579,6 +685,15 @@ void setup() {
   }
 
   allowSleepAt = millis() + 2000;
+
+  // Spike only (see BleNotifyRelay's own comment) -- last, so any BLE bring-up
+  // issue can never affect the boot path above it. Not on a resumed Sync All: its whole
+  // point is a clean heap for WiFi and TLS, and NimBLE would take ~55KB of it straight
+  // back. Sync All always restarts once it is done (SyncAllActivity::onExit()), and BLE
+  // comes up at that boot.
+  if (!(resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SYNC)) {
+    BleNotifyRelay::begin();
+  }
 }
 
 void loop() {
@@ -606,6 +721,7 @@ void loop() {
   }
 
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
+  BleNotifyRelay::poll();
 
   renderer.setFadingFix(SETTINGS.fadingFix);
 
@@ -745,6 +861,10 @@ void loop() {
     if (gpio.isPressed(HalGPIO::BTN_DOWN)) {
       return;
     }
+    // Held past the threshold: a deliberate press either way, so this always
+    // sleeps with the ordinary Sleep Screen mode -- Quick Resume's own
+    // short-press case is the *other* branch below, which only fires on an
+    // early release, never here.
     LOG_DBG("MAIN", "Power button held %lums, sleeping", gpio.getPowerButtonHeldTime());
     enterDeepSleep();
     // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
@@ -762,6 +882,21 @@ void loop() {
     return;
   }
 #endif
+  // Short Power Button Click == Quick Resume: released before the threshold
+  // above was reached, so this was a genuine short press rather than the
+  // ordinary held-to-sleep gesture -- sleep now, forcing Quick Resume
+  // regardless of the configured Sleep Screen mode. getPowerButtonHeldTime()
+  // still reports the just-ended press's own duration once released (it does
+  // not reset to 0), so this and the branch above are mutually exclusive: one
+  // fires while still held (never reaching this point), the other only once
+  // released short of it.
+  if (millis() >= allowSleepAt && SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SHORT_PWRBTN_QUICK_RESUME &&
+      gpio.wasReleased(HalGPIO::BTN_POWER) && !gpio.isPressed(HalGPIO::BTN_DOWN) &&
+      gpio.getPowerButtonHeldTime() < SETTINGS.getPowerButtonDuration()) {
+    enterDeepSleep(/*fromTimeout=*/false, /*forceQuickResume=*/true);
+    // This should never be hit as `enterDeepSleep` calls esp_deep_sleep_start
+    return;
+  }
 
   // Refresh screen when power button is short-pressed with FORCE_REFRESH setting.
   if (mappedInputManager.homeButtonAction() == HomeButtonAction::ToggleFrontlight) {

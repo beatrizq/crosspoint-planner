@@ -50,6 +50,9 @@ class Activity {
   // Returns true when the activity schedules its own forced refresh.
   virtual bool handleForcedRefresh() { return false; }
   virtual bool isHomeActivity() const { return false; }
+  // For the sleep-wake resume flag: whether this is the companion's
+  // quick-pick reveal screen, mirroring isReaderActivity() above.
+  virtual bool isQuickPickActivity() const { return false; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
@@ -67,4 +70,16 @@ class Activity {
   // TODO: remove this in near future
   static void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
   static void onSelectBook(const std::string& path);
+
+ protected:
+  enum class ListTouchResult : uint8_t { None, Consumed, Activated };
+  // The fork's list screens call this for touch input; the boards it targets (X3/X4) have no touch
+  // panel, and upstream's own touch layer moved into FreeInkUI, so there is nothing to handle here.
+  ListTouchResult handleListTouch(int&, int, int, int, bool) { return ListTouchResult::None; }
+
+  // Opens the keyboard on a CrossPointSettings char field and persists the
+  // result. Shared by the app settings screens for their Nickname rows, which are
+  // all the same interaction over a different field. Takes the field rather than
+  // an app id so this header stays clear of the settings and theme headers.
+  void editSettingsText(const char* title, char* field, size_t fieldSize);
 };

@@ -31,7 +31,9 @@
 // indexed book so an allocation failure remains recoverable on the C3.
 class LibraryListActivity final : public UiTabListActivity {
  public:
-  LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
+  // returnToReadMenu: Back out of the screen returns to ReadMenuActivity instead of Home -- set
+  // only by ActivityManager::goToLibrary() on behalf of ReadMenuActivity.
+  LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnToReadMenu = false);
 
   void onEnter() override;
   void onExit() override;
@@ -185,6 +187,7 @@ class LibraryListActivity final : public UiTabListActivity {
 
   bool lockNextConfirmRelease = false;
   bool lockNextBackRelease = false;
+  bool returnToReadMenu = false;
 
   // Row options modal (Recent long-press menu); owned here so it outlives the
   // touch event that opened it.
