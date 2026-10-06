@@ -189,6 +189,14 @@ bool CrossPointSettings::fromJson(JsonVariantConst doc) {
     needsResave = true;
   }
 
+  // The Planner font size was saved as "organizerFontSize" before the screen was
+  // renamed: carry that choice over rather than resetting it to the default.
+  if (doc["plannerFontSize"].isNull() && !doc["organizerFontSize"].isNull()) {
+    const uint8_t legacyFontSize = doc["organizerFontSize"] | (uint8_t)PLANNER_FONT_SMALL;
+    plannerFontSize = legacyFontSize < PLANNER_FONT_SIZE_COUNT ? legacyFontSize : (uint8_t)PLANNER_FONT_SMALL;
+    needsResave = true;
+  }
+
   if (doc["sleepTimeoutMinutes"].isNull() && !doc["sleepTimeout"].isNull()) {
     const uint8_t legacyValue =
         clamp(doc["sleepTimeout"] | (uint8_t)SLEEP_10_MIN, SLEEP_TIMEOUT_COUNT, (uint8_t)SLEEP_10_MIN);

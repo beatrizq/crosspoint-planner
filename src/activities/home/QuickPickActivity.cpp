@@ -88,6 +88,8 @@ constexpr int GLANCE_ICON_GAP = 8;
 // below its text, and how many lines the one alert shown may wrap over.
 constexpr int ALERT_ROW_PAD = 4;
 constexpr int ALERT_MAX_LINES = 3;
+// The bell icon in front of the alert (bell24.h is 24x24).
+constexpr int ALERT_ICON_SIZE = 24;
 
 // Right1 means "go Home" on every other screen, but the instant you land
 // here (this screen IS Home) it means "open Tasks" instead, since onEnter()
@@ -126,6 +128,21 @@ void dimText(const GfxRenderer& renderer, const int x, const int y, const int fo
              const bool ink) {
   if (!ink) return;
   dimText(renderer, x, y, fontId, text);
+}
+
+// Draws a 1-bpp square icon (MSB first, bit 0 = ink -- the format
+// GfxRenderer::drawIcon() takes) in black, or in white for use on a filled
+// background. drawIcon() only inks black; this plots through the same orientation
+// mapping so the two line up pixel for pixel.
+void drawIconInk(const GfxRenderer& renderer, const uint8_t* bitmap, const int x, const int y, const int size,
+                 const bool black) {
+  const int rowBytes = (size + 7) / 8;
+  for (int row = 0; row < size; row++) {
+    for (int col = 0; col < size; col++) {
+      const uint8_t byte = bitmap[row * rowBytes + (col >> 3)];
+      if (((byte >> (7 - (col & 7))) & 1) == 0) renderer.drawPixel(x + (size - 1 - row), y + col, black);
+    }
+  }
 }
 
 // The Tasks section's title row: every entry on one line, the selected one in
@@ -1312,10 +1329,11 @@ void QuickPickActivity::render(RenderLock&&) {
   // focused, same as the header and glance strip it stands in for.
   int alertsHeight = 0;
   if (showAlerts) {
-    constexpr int BULLET_SIZE = 6;
-    const int bulletX = metrics.contentSidePadding;
-    const int textX = bulletX + BULLET_SIZE + GLANCE_ICON_GAP;
-    const int maxWidth = pageWidth - metrics.contentSidePadding * 2 - BULLET_SIZE - GLANCE_ICON_GAP;
+    // The alerts' own bell (the icon the glance strip's alert line used to carry)
+    // leads the text, in place of the calendar rows' dot.
+    const int iconX = metrics.contentSidePadding;
+    const int textX = iconX + ALERT_ICON_SIZE + GLANCE_ICON_GAP;
+    const int maxWidth = pageWidth - metrics.contentSidePadding * 2 - ALERT_ICON_SIZE - GLANCE_ICON_GAP;
     char line[192];
     if (pendingAlertLine(0, line, sizeof(line))) {
       const auto fit =
@@ -1328,8 +1346,9 @@ void QuickPickActivity::render(RenderLock&&) {
       const bool selected = focus == Focus::Alerts;
       if (selected) renderer.fillRect(0, headerTop, pageWidth, alertsHeight);
       int textY = headerTop + (alertsHeight - textHeight) / 2;
-      renderer.fillRoundedRect(bulletX, textY + (glanceLineH - BULLET_SIZE) / 2, BULLET_SIZE, BULLET_SIZE,
-                               BULLET_SIZE / 2, selected ? Color::White : Color::Black);
+      // On the first line of text, its centre on that line's centre.
+      drawIconInk(renderer, Bell24Icon, iconX, textY + (glanceLineH - ALERT_ICON_SIZE) / 2, ALERT_ICON_SIZE,
+                  /*black=*/!selected);
       for (const auto& wrapped : fit.lines) {
         renderer.drawText(UI_10_FONT_ID, textX, textY, wrapped.c_str(), !selected);
         textY += glanceLineH;
