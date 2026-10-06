@@ -302,8 +302,9 @@ void LyraTheme::drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const c
     // title sits near the top of `rect` instead of leaving that space blank.
     const int titleY = includeStatusRow ? rect.y + LyraMetrics::values.batteryBarHeight + 3 : rect.y + 3;
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title, maxTitleWidth, EpdFontFamily::BOLD);
-    renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding, titleY, truncatedTitle.c_str(),
-                      true, EpdFontFamily::BOLD);
+    // Starts where the tab labels and the row text do (the 8px inset inside their pills/selection).
+    renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection, titleY,
+                      truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
     if (showRule) {
       renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
     }
@@ -336,7 +337,7 @@ void LyraTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char
 
   if (labelWidth > 0) {
     auto truncatedLabel = renderer.truncatedText(UI_10_FONT_ID, label, labelWidth, EpdFontFamily::REGULAR);
-    renderer.drawText(UI_10_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding, rect.y + 6,
+    renderer.drawText(UI_10_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection, rect.y + 6,
                       truncatedLabel.c_str(), true, EpdFontFamily::REGULAR);
   }
 
