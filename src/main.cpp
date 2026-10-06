@@ -128,9 +128,11 @@ unsigned long t2 = 0;
 // Definitions for SilentRestart.h. RTC_NOINIT survives ESP.restart() but not power loss.
 RTC_NOINIT_ATTR uint32_t silentRebootMagic;
 RTC_NOINIT_ATTR uint32_t silentRebootTarget;
+RTC_NOINIT_ATTR uint32_t silentRebootSyncDone;  // services already done, when the target is SYNC
 constexpr uint32_t SILENT_REBOOT_MAGIC = 0xC1EAB007;
 constexpr uint32_t SILENT_REBOOT_TARGET_HOME = 0;
 constexpr uint32_t SILENT_REBOOT_TARGET_READER = 1;
+constexpr uint32_t SILENT_REBOOT_TARGET_SYNC = 2;
 
 // How the device is coming back to life, resolved once at boot. Both resume
 // flows suppress the splash and leave the panel holding its pre-boot frame; a
@@ -168,6 +170,17 @@ void silentRestartToReader() {
   silentRebootTarget = SILENT_REBOOT_TARGET_READER;
   silentRebootMagic = SILENT_REBOOT_MAGIC;
   LOG_DBG("MAIN", "Silent restart (target=reader)");
+  GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+  delay(50);
+  ESP.restart();
+}
+
+void silentRestartToSyncAll(const uint32_t doneMask) {
+  if (deepSleepInProgress) return;  // sleeping supersedes the heap-defrag reboot
+  silentRebootTarget = SILENT_REBOOT_TARGET_SYNC;
+  silentRebootSyncDone = doneMask;
+  silentRebootMagic = SILENT_REBOOT_MAGIC;
+  LOG_INF("MAIN", "Silent restart (target=sync, done mask %u)", static_cast<unsigned>(doneMask));
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   delay(50);
   ESP.restart();
@@ -300,9 +313,11 @@ void setup() {
   // Bound the target range too — RTC_NOINIT memory is uninitialized on cold boot.
   const bool isSilentReboot = (silentRebootMagic == SILENT_REBOOT_MAGIC);
   const uint32_t snapshotTarget =
-      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_READER) ? silentRebootTarget : 0;
+      (isSilentReboot && silentRebootTarget <= SILENT_REBOOT_TARGET_SYNC) ? silentRebootTarget : 0;
+  const uint32_t snapshotSyncDone = (snapshotTarget == SILENT_REBOOT_TARGET_SYNC) ? silentRebootSyncDone : 0;
   silentRebootMagic = 0;
   silentRebootTarget = 0;
+  silentRebootSyncDone = 0;
 
   gpio.begin();
   powerManager.begin();
@@ -467,6 +482,10 @@ void setup() {
   } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_READER &&
              !APP_STATE.openEpubPath.empty()) {
     activityManager.goToReader(APP_STATE.openEpubPath);
+  } else if (resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SYNC) {
+    // Sync All ran out of memory part-way and restarted to clear it: pick the run up
+    // again, with the services that already finished marked done.
+    activityManager.goToSyncAllResumed(snapshotSyncDone);
   } else if (resume == BootResume::Silent) {
     // target == home (or reader with no open book): land on home — don't fall
     // through to the sleep-wake "resume reader"/"resume quick-pick" logic
@@ -537,8 +556,13 @@ void setup() {
   allowSleepAt = millis() + 2000;
 
   // Spike only (see BleNotifyRelay's own comment) -- last, so any BLE bring-up
-  // issue can never affect the boot path above it.
-  BleNotifyRelay::begin();
+  // issue can never affect the boot path above it. Not on a resumed Sync All: its whole
+  // point is a clean heap for WiFi and TLS, and NimBLE would take ~55KB of it straight
+  // back. Sync All always restarts once it is done (SyncAllActivity::onExit()), and BLE
+  // comes up at that boot.
+  if (!(resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SYNC)) {
+    BleNotifyRelay::begin();
+  }
 }
 
 void loop() {

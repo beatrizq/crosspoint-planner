@@ -38,9 +38,17 @@ class SyncAllActivity final : public Activity {
   // replaces it with this one (see ActivityManager::goToSyncAll()'s own
   // comment). Defaults to nullptr, meaning "go Home" -- the original
   // behavior, from when this screen only had the one caller.
+  // alreadyDoneMask / resumedAfterRestart: set when this run is the second half of one
+  // that ran out of memory and restarted to clear it -- the services in the mask
+  // (bit i = plannerSync::serviceAt(i)) already finished and are not run again, and a
+  // second memory error is reported rather than restarting again.
   explicit SyncAllActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
-                           std::function<void()> onReturn = nullptr)
-      : Activity("SyncAll", renderer, mappedInput), onReturn(std::move(onReturn)) {}
+                           std::function<void()> onReturn = nullptr, uint32_t alreadyDoneMask = 0,
+                           bool resumedAfterRestart = false)
+      : Activity("SyncAll", renderer, mappedInput),
+        onReturn(std::move(onReturn)),
+        alreadyDoneMask(alreadyDoneMask),
+        resumedAfterRestart(resumedAfterRestart) {}
 
   void onEnter() override;
   void onExit() override;
@@ -76,4 +84,6 @@ class SyncAllActivity final : public Activity {
   bool radioTornDown = false;
 
   std::function<void()> onReturn;
+  uint32_t alreadyDoneMask = 0;
+  bool resumedAfterRestart = false;
 };

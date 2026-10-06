@@ -131,6 +131,10 @@ class ActivityManager {
   // SyncAllActivity's own comment; defaults to Home for a caller with no
   // particular screen to return to.
   void goToSyncAll(std::function<void()> onReturn = nullptr);
+  // Reopens Sync All after the silent restart it asked for when a step ran out of memory
+  // (see silentRestartToSyncAll()): the services in `alreadyDoneMask` are shown done and
+  // not run again, and it will not restart a second time.
+  void goToSyncAllResumed(uint32_t alreadyDoneMask);
   void goToReadMenu();
   void goToBrowser(bool returnToReadMenu = false);
   void goToReader(std::string path, bool allowFastInitialRefresh = false);
