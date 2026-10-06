@@ -9,6 +9,7 @@
 
 #include "activities/Activity.h"
 #include "activities/planner/TaskTabModel.h"
+#include "components/StatusBand.h"
 
 /**
  * The companion's own screen -- the main screen's "Planner" tile
@@ -22,15 +23,14 @@
  * else. The figure and bubble can be hidden entirely (Settings -> Companion ->
  * Show Companion), which hands their space to the Tasks section.
  *
- * At the top sit the header and a glance strip -- today's own Google Calendar
- * events, bulleted (see todaysEvents()'s own comment; there can be more than
- * one, so this is a plain bullet, not that one app's own icon), collapsing to
- * nothing when there is genuinely nothing today rather than spending space on
- * a "nothing today" line. While any BLE alert is pending, the alert area takes
- * both their places, showing one alert at a time: the newest pending one,
- * with older ones piled up underneath it. Dismissing it brings the next-newest
- * up, and so on. Once the last is gone the header and glance strip are back.
- * The header itself carries no title or
+ * At the top sits the shared status band (see StatusBand): the header, then a
+ * glance strip -- today's own Google Calendar events, bulleted (there can be more
+ * than one, so this is a plain bullet, not that one app's own icon), collapsing to
+ * nothing when there is genuinely nothing today (this screen alone shows a "not
+ * synced yet" line before the first sync) -- then, below the events, the newest
+ * pending BLE alert, one at a time with older ones piled up underneath it.
+ * Dismissing it brings the next-newest up, and so on; the header and the events
+ * stay where they are the whole time. The header itself carries no title or
  * subtitle of this screen's own (drawHeader() is called with both nullptr;
  * see render()'s own comment for why) -- the companion's name and its
  * Age/Highscore, shown here on earlier iterations of this screen, are gone.
@@ -71,10 +71,10 @@
  *
  * Button IDs used here: Left1/Left2 are the pair that moves focus; Right1/
  * Right2 are the pair printed "Apps"/"Select" on the case. Focus (see the
- * Focus enum) cycles through its stops (the alert area standing in for the
- * header and glance strip while alerts are pending) in one continuous circular loop, in
- * visual top-to-bottom order -- the header, the glance strip, the companion
- * figure, the title row, then the embedded Tasks section -- wrapping back to the header
+ * Focus enum) cycles through its stops in one continuous circular loop, in
+ * visual top-to-bottom order -- the header, the glance strip, the alert (those
+ * last two only when there is something to show), the companion figure, the title
+ * row, then the embedded Tasks section -- wrapping back to the header
  * (Left2 = forward, Left1 = the exact reverse). Right2 acts on whatever is
  * focused, same as always; Right1 no longer means "leave" anywhere on this
  * screen -- there is nowhere left to leave *to*, this screen already is Home
@@ -93,15 +93,14 @@
  *     can be several bulleted events, but Right1's own action (open
  *     Calendar) is the same regardless of which one is showing. Inverted the
  *     same way the header is when focused. Skipped by Left1/Left2 entirely
- *     when there is genuinely nothing today (see todaysEvents()'s own
+ *     when there is genuinely nothing today (see StatusBand::todaysEvents()'s own
  *     comment) -- an empty strip has nothing to land on, same reasoning the
  *     old mood-label stop used to skip itself when hidden.
- *   - Alert area (only while alerts are pending; it replaces the Header and
- *     Glance stops with a single stop of its own, inverted when focused).
- *     Right2 dismisses the alert on top, revealing the next-newest (dismissal
- *     is soft -- the Alerts screen still lists it); Right1 opens the Alerts
- *     screen. Header actions
- *     (Settings, Sync All) are out of reach until the last alert is dismissed.
+ *   - Alert (only while alerts are pending; its own stop below the glance
+ *     strip, inverted when focused). Right2 dismisses the alert on top,
+ *     revealing the next-newest (dismissal is soft -- the Alerts screen still
+ *     lists it); Right1 opens the Alerts screen. The header's own actions stay
+ *     reachable throughout.
  *   - Companion figure: the bubble itself inverts (black background, white
  *     text) rather than a selection-box outline around the figure. Right2
  *     does nothing -- the bubble only holds the companion's own remarks.
@@ -225,36 +224,15 @@ class QuickPickActivity final : public Activity {
   // screen's own tab bar/header already use for staying inside that budget.
   void renderTasksTab(int top, int height) const;
 
-  // One line of the glance strip's own Calendar bullet list (see this
-  // file's own header comment and todaysEvents()'s own comment). isFallback
-  // means title is the whole line (not synced yet) -- no bullet, no time,
-  // drawn plain.
-  struct GlanceEventRow {
-    std::string title;
-    std::string time;  // ", HH:MM" (pre-formatted, own leading separator), or empty.
-    bool isFallback = false;
-  };
-  // Today's own Calendar events, one row per event, in GCAL_EVENTS' own
-  // chronological order. Empty (not a fallback row) when synced and there is
-  // genuinely nothing today; a fallback row only ever covers "not synced
-  // yet" (see todaysEvents()'s own comment).
-  std::vector<GlanceEventRow> todaysEvents() const;
-  // Pending BLE alerts, newest first -- what the alert area shows in place of
-  // the header and glance strip (see this file's own header comment). Always 0
-  // in builds without ENABLE_BLE_NOTIFY_SPIKE.
-  static size_t pendingAlertCount();
-  // Writes pending alert k's (0 = newest) "title: content" line into out; false if k is out of range.
-  static bool pendingAlertLine(size_t k, char* out, size_t outSize);
-  // Keeps focus on a stop that exists right now: the alert area takes over
-  // the Header and Glance stops while alerts are pending and gives them back
-  // once the last one is dismissed, and the Companion stop is gone while the
-  // companion is hidden.
+  // Keeps focus on a stop that exists right now: a band stop that has gone away (the
+  // last alert dismissed, the last event ended) falls back to the nearest one left,
+  // and the Companion stop is gone while the companion is hidden.
   void reconcileFocus();
   // Whether the companion figure and its bubble are drawn (Settings -> Companion).
   static bool companionVisible();
-  // Focus-loop moves in and out of the top block (the alert area, or else the
-  // header and glance strip) -- shared by Left1/Left2 so the two directions
-  // cannot disagree about which stops exist.
+  // Focus-loop moves in and out of the top block (the band: status bar, calendar
+  // rows, alert) -- shared by Left1/Left2 so the two directions cannot disagree
+  // about which stops exist.
   void focusTopBlockFirst();
   void focusTopBlockLast();
   void focusAfterTopBlock();
@@ -275,9 +253,11 @@ class QuickPickActivity final : public Activity {
   // needs its row cursor and tabBarFocused.
   enum class Focus { Embedded, Header, Glance, Alerts, Companion, Projects };
   Focus focus = Focus::Companion;
-  // Pending alerts the last loop() saw, so one arriving (or being dismissed
-  // elsewhere) repaints the screen.
-  size_t lastAlertCount = 0;
+  // The top of the screen: status bar, today's calendar events, the newest pending
+  // alert -- see StatusBand. Header, Glance and Alerts above are its three stops.
+  StatusBand band;
+  static StatusBand::Stop bandStopFor(Focus f);
+  static Focus focusForBandStop(StatusBand::Stop stop);
 
   // Tabs currently visible in the embedded section, and which one is active
   // -- same shape as TasksActivity's own visibleTabs/currentKind(), kept in
@@ -303,10 +283,6 @@ class QuickPickActivity final : public Activity {
   // other place that calls CompanionTracker::refreshForDisplay().
   unsigned long lastCompanionRefreshMs = 0;
   companion::Mood lastCompanionMood = companion::Mood::Happy;
-  // How many glance rows the last idle check found, so an event ending (which
-  // removes its row) repaints the screen -- see loop()'s own comment. -1 until
-  // the first check, which then repaints once at most.
-  int lastGlanceRowCount = -1;
   // Which of companion::idleBubbleText()'s IDLE_BUBBLE_VARIANT_COUNT lines
   // the bubble shows for the current mood, when it's showing an idle line at
   // all (see render()'s own comment) -- rolled fresh in onEnter() and again

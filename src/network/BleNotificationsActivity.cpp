@@ -78,6 +78,9 @@ void BleNotificationsActivity::onEnter() {
   Activity::onEnter();
   selectorIndex = 0;
   headerFocused = false;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.setShowAlert(false);
+  band.poll();
   // Seen it -- clears the Home badge. Saved right away so the clear survives
   // a WiFi-sync reboot the same way the entries themselves do.
   if (BLE_NOTIFICATIONS.getUnreadCount() > 0) {
@@ -90,7 +93,14 @@ void BleNotificationsActivity::onEnter() {
 void BleNotificationsActivity::loop() {
   const int itemCount = static_cast<int>(BLE_NOTIFICATIONS.getCount());
 
+  // A calendar event ending changes what the band shows: repaint, and keep focus on a
+  // stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (headerFocused) bandStop = band.clamp(bandStop);
+
   if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
+    // On the calendar rows, Right1 opens the Calendar screen.
+    if (headerFocused && band.handleRight1(bandStop)) return;
     onGoHome();
     return;
   }
@@ -120,6 +130,7 @@ void BleNotificationsActivity::loop() {
   }
 
   if (headerFocused && mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
+    if (bandStop != StatusBand::Stop::StatusBar) return;  // nothing to act on the calendar rows
     activityManager.goToSyncAll([] { activityManager.goToBleNotifications(); });
     return;
   }
@@ -133,7 +144,7 @@ void BleNotificationsActivity::loop() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int rowHeight = renderer.getLineHeight(titleFontId()) + renderer.getLineHeight(subtitleFontId()) +
                         std::max(6, renderer.getLineHeight(titleFontId()) * 2 / 5);
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentTop = band.bottom(renderer) + metrics.verticalSpacing;
   const int contentHeight =
       renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.buttonHintsGap;
   const int pageItems = std::max(1, contentHeight / std::max(1, rowHeight));
@@ -164,10 +175,14 @@ void BleNotificationsActivity::loop() {
 
   buttonNavigator.onNextRelease([this, itemCount] {
     if (headerFocused) {
-      headerFocused = false;
-      selectorIndex = 0;
+      // Down through the band's stops, then into the list.
+      if (!band.step(bandStop, /*forward=*/true)) {
+        headerFocused = false;
+        selectorIndex = 0;
+      }
     } else if (static_cast<int>(selectorIndex) == itemCount - 1) {
       headerFocused = true;
+      bandStop = band.first();
     } else {
       selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), itemCount);
     }
@@ -175,10 +190,14 @@ void BleNotificationsActivity::loop() {
   });
   buttonNavigator.onPreviousRelease([this, itemCount] {
     if (headerFocused) {
-      headerFocused = false;
-      selectorIndex = itemCount > 0 ? static_cast<size_t>(itemCount - 1) : 0;
+      // Up through the band's stops, then wrap to the end of the list.
+      if (!band.step(bandStop, /*forward=*/false)) {
+        headerFocused = false;
+        selectorIndex = itemCount > 0 ? static_cast<size_t>(itemCount - 1) : 0;
+      }
     } else if (selectorIndex == 0) {
       headerFocused = true;
+      bandStop = band.last();
     } else {
       selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), itemCount);
     }
@@ -197,17 +216,13 @@ void BleNotificationsActivity::render(RenderLock&&) {
   // sync info -- this screen isn't a PlannerScreenActivity (see this
   // file's own header comment), so it sets the status directly rather than
   // through that base class's formatStatus() override point.
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, tr(STR_BLE_NOTIFICATIONS),
-                 BleNotifyRelay::isConnected() ? tr(STR_BLE_CONNECTED) : tr(STR_BLE_DISCONNECTED));
-  // Hovering the header (see headerFocused's own comment): a true pixel
-  // invert, the same technique QuickPickActivity's own header focus uses.
-  if (headerFocused) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width,
-                        std::min(HEADER_FOCUS_HIGHLIGHT_HEIGHT, headerRect.height));
-  }
+  if (headerFocused) bandStop = band.clamp(bandStop);
+  const int headerBottom =
+      band.drawTitled(renderer, tr(STR_BLE_NOTIFICATIONS),
+                      BleNotifyRelay::isConnected() ? tr(STR_BLE_CONNECTED) : tr(STR_BLE_DISCONNECTED),
+                      headerFocused ? bandStop : StatusBand::Stop::None);
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentTop = headerBottom + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.buttonHintsGap;
 
   const size_t count = BLE_NOTIFICATIONS.getCount();
@@ -279,9 +294,9 @@ void BleNotificationsActivity::render(RenderLock&&) {
     }
   }
 
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_HOME), headerFocused ? tr(STR_SYNC_ALL) : (count > 0 ? tr(STR_SELECT) : ""),
-                            tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(
+      headerFocused ? band.right1Label(bandStop) : tr(STR_HOME),
+      headerFocused ? band.right2Label(bandStop) : (count > 0 ? tr(STR_SELECT) : ""), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

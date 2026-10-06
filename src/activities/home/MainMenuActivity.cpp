@@ -20,7 +20,6 @@ namespace {
 // is sized for a full title band this screen does not draw, so the layout below
 // uses the height of just the clock/battery row.
 constexpr int STATUS_BAR_HEIGHT = 36;
-constexpr int STATUS_BAR_HIGHLIGHT_HEIGHT = STATUS_BAR_HEIGHT - 6;
 // Between the status bar and the first tile.
 constexpr int STATUS_BAR_GAP = 10;
 
@@ -73,6 +72,8 @@ void drawScaledIcon(const GfxRenderer& renderer, const uint8_t* bitmap, const in
 void MainMenuActivity::onEnter() {
   Activity::onEnter();
   focus = Stop::Read;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.poll();
   settingsPressSeen = false;
   swallowConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Right2);
   requestUpdate();
@@ -80,17 +81,27 @@ void MainMenuActivity::onEnter() {
 
 MainMenuActivity::TileLayout MainMenuActivity::tileLayout() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int top = metrics.topPadding + STATUS_BAR_HEIGHT + STATUS_BAR_GAP;
+  // Below the band as it was last drawn: the status bar, plus whatever calendar rows
+  // and alert are showing.
+  const int top = band.bottom(renderer) + STATUS_BAR_GAP;
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.buttonHintsGap;
   return TileLayout{top, std::max(0, (bottom - top) / 2)};
 }
 
 void MainMenuActivity::activateFocused() {
   switch (focus) {
-    case Stop::StatusBar:
-      // Returns here once the sync is done; goHome() is the one mechanism every
-      // other screen's own Sync All return uses too.
-      activityManager.goToSyncAll([] { activityManager.goHome(); });
+    case Stop::Band:
+      if (bandStop == StatusBand::Stop::StatusBar) {
+        // Returns here once the sync is done; goHome() is the one mechanism every
+        // other screen's own Sync All return uses too.
+        activityManager.goToSyncAll([] { activityManager.goHome(); });
+      } else {
+        // Dismisses the alert (the next-newest takes its place); nothing to do on
+        // the calendar rows.
+        band.handleRight2(bandStop);
+        bandStop = band.clamp(bandStop);
+        requestUpdate();
+      }
       break;
     case Stop::Read:
       activityManager.goToReadMenu();
@@ -102,22 +113,43 @@ void MainMenuActivity::activateFocused() {
 }
 
 void MainMenuActivity::loop() {
+  // An alert arriving or being dismissed elsewhere, or a calendar event ending, changes
+  // what the band shows: repaint, and keep focus on a stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (focus == Stop::Band) bandStop = band.clamp(bandStop);
+
+  // One continuous loop: the band's stops, Reader, Planner, and back around.
   buttonNavigator.onNext([this] {
-    focus = static_cast<Stop>((static_cast<int>(focus) + 1) % STOP_COUNT);
+    if (focus == Stop::Band) {
+      if (!band.step(bandStop, /*forward=*/true)) focus = Stop::Read;
+    } else if (focus == Stop::Read) {
+      focus = Stop::Planner;
+    } else {
+      focus = Stop::Band;
+      bandStop = band.first();
+    }
     requestUpdate();
   });
   buttonNavigator.onPrevious([this] {
-    focus = static_cast<Stop>((static_cast<int>(focus) + STOP_COUNT - 1) % STOP_COUNT);
+    if (focus == Stop::Band) {
+      if (!band.step(bandStop, /*forward=*/false)) focus = Stop::Planner;
+    } else if (focus == Stop::Read) {
+      focus = Stop::Band;
+      bandStop = band.last();
+    } else {
+      focus = Stop::Read;
+    }
     requestUpdate();
   });
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) settingsPressSeen = true;
   if (mappedInput.wasPressed(MappedInputManager::Button::Right2)) swallowConfirmRelease = false;
 
-  // Right1 is Settings from every stop -- there is nowhere to go back to from
-  // Home. settingsPressSeen guards against the stale release of the press that
-  // closed the previous screen.
+  // Right1 is Settings from every stop except the calendar rows and the alert (it
+  // opens those screens) -- there is nowhere to go back to from Home. settingsPressSeen
+  // guards against the stale release of the press that closed the previous screen.
   if (mappedInput.wasReleased(MappedInputManager::Button::Right1) && settingsPressSeen) {
+    if (focus == Stop::Band && band.handleRight1(bandStop)) return;
     activityManager.goToSettings();
     return;
   }
@@ -151,15 +183,12 @@ void MainMenuActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
 
-  // The status bar is the theme's own clock/date/battery row: a null title and
-  // subtitle drop the title band and leave just that row (see QuickPickActivity's
-  // render() for the per-theme details).
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, /*title=*/nullptr, /*subtitle=*/nullptr, /*showRule=*/true);
-  // Hovering it: a true pixel invert over just the clock/battery row.
-  if (focus == Stop::StatusBar) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width, STATUS_BAR_HIGHLIGHT_HEIGHT);
-  }
+  // The top of the screen is the shared status band: the theme's clock/date/battery
+  // row, today's calendar events, the newest pending alert (see StatusBand). This
+  // screen has no title of its own, so it is drawn untitled.
+  if (focus == Stop::Band) bandStop = band.clamp(bandStop);
+  band.drawUntitled(renderer, metrics.topPadding, STATUS_BAR_HEIGHT,
+                    focus == Stop::Band ? bandStop : StatusBand::Stop::None);
 
   const TileLayout layout = tileLayout();
   const int labelHeight = renderer.getLineHeight(UI_12_FONT_ID);
@@ -202,11 +231,12 @@ void MainMenuActivity::render(RenderLock&&) {
                       true, style);
   }
 
-  // Right1 is Settings from every stop; Right2 is Sync All on the status bar and
-  // Select on a tile.
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_SETTINGS_TITLE), focus == Stop::StatusBar ? tr(STR_SYNC_ALL) : tr(STR_SELECT),
-                            tr(STR_DIR_PREV), tr(STR_DIR_NEXT));
+  // Right1 is Settings (the calendar rows and the alert open their own screens);
+  // Right2 is Sync All on the status bar, Dismiss on the alert, and Select on a tile.
+  const bool onBandAction = focus == Stop::Band && bandStop != StatusBand::Stop::StatusBar;
+  const auto labels = mappedInput.mapLabels(onBandAction ? band.right1Label(bandStop) : tr(STR_SETTINGS_TITLE),
+                                            focus == Stop::Band ? band.right2Label(bandStop) : tr(STR_SELECT),
+                                            tr(STR_DIR_PREV), tr(STR_DIR_NEXT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

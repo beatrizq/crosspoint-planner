@@ -34,6 +34,8 @@ void RecentBooksActivity::onEnter() {
 
   selectorIndex = 0;
   headerFocused = false;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.poll();
   requestUpdate();
 }
 
@@ -43,11 +45,18 @@ void RecentBooksActivity::onExit() {
 }
 
 void RecentBooksActivity::loop() {
-  const int pageItems = UITheme::getInstance().getNumberOfItemsPerPage(renderer, true, false, true, true);
+  // An alert arriving or being dismissed elsewhere, or a calendar event ending, changes
+  // what the band shows: repaint, and keep focus on a stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (headerFocused) bandStop = band.clamp(bandStop);
+
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentTop = band.bottom(renderer) + metrics.verticalSpacing;
   const int contentHeight =
       renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.buttonHintsGap;
+  // From the room the list really has (the band can have pushed it down), not the
+  // theme's assumption of a plain header.
+  const int pageItems = GUI.getListPageItems(contentHeight, true);
 
   // After a long-press has fired, swallow input until Confirm is physically released
   // (so the release doesn't also open the book; re-arm only once the button is up).
@@ -70,6 +79,14 @@ void RecentBooksActivity::loop() {
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (headerFocused) {
+      if (bandStop != StatusBand::Stop::StatusBar) {
+        // Dismisses the alert (the next-newest takes its place); nothing to do on
+        // the calendar rows.
+        band.handleRight2(bandStop);
+        bandStop = band.clamp(bandStop);
+        requestUpdate();
+        return;
+      }
       // Captured by value: this screen is destroyed the instant
       // goToSyncAll()'s own replaceActivity() call runs.
       activityManager.goToSyncAll([backToRead = returnToReadMenu] { activityManager.goToRecentBooks(backToRead); });
@@ -95,6 +112,8 @@ void RecentBooksActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
+    // On the calendar rows or the alert, Right1 opens that screen.
+    if (headerFocused && band.handleRight1(bandStop)) return;
     // With the status bar focused Right1 is always "« Home" (see render()), even
     // when this screen was opened from the Read menu.
     if (returnToReadMenu && !headerFocused) {
@@ -124,10 +143,14 @@ void RecentBooksActivity::loop() {
 
   buttonNavigator.onNextRelease([this, listSize] {
     if (headerFocused) {
-      headerFocused = false;
-      selectorIndex = 0;
+      // Down through the band's stops, then into the list.
+      if (!band.step(bandStop, /*forward=*/true)) {
+        headerFocused = false;
+        selectorIndex = 0;
+      }
     } else if (static_cast<int>(selectorIndex) == listSize - 1) {
       headerFocused = true;
+      bandStop = band.first();
     } else {
       selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
     }
@@ -136,10 +159,14 @@ void RecentBooksActivity::loop() {
 
   buttonNavigator.onPreviousRelease([this, listSize] {
     if (headerFocused) {
-      headerFocused = false;
-      selectorIndex = listSize > 0 ? static_cast<size_t>(listSize - 1) : 0;
+      // Up through the band's stops, then wrap to the end of the list.
+      if (!band.step(bandStop, /*forward=*/false)) {
+        headerFocused = false;
+        selectorIndex = listSize > 0 ? static_cast<size_t>(listSize - 1) : 0;
+      }
     } else if (selectorIndex == 0) {
       headerFocused = true;
+      bandStop = band.last();
     } else {
       selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
     }
@@ -189,16 +216,11 @@ void RecentBooksActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, tr(STR_MENU_RECENT_BOOKS));
-  // Hovering the header (see headerFocused's own comment): a true pixel
-  // invert, the same technique QuickPickActivity's own header focus uses.
-  if (headerFocused) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width,
-                        std::min(HEADER_FOCUS_HIGHLIGHT_HEIGHT, headerRect.height));
-  }
+  if (headerFocused) bandStop = band.clamp(bandStop);
+  const int headerBottom =
+      band.drawTitled(renderer, tr(STR_MENU_RECENT_BOOKS), nullptr, headerFocused ? bandStop : StatusBand::Stop::None);
 
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentTop = headerBottom + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.buttonHintsGap;
 
   // Recent tab
@@ -213,9 +235,9 @@ void RecentBooksActivity::render(RenderLock&&) {
   }
 
   // Help text
-  const auto labels =
-      mappedInput.mapLabels(returnToReadMenu && !headerFocused ? tr(STR_BACK) : tr(STR_HOME),
-                            headerFocused ? tr(STR_SYNC_ALL) : tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(
+      headerFocused ? band.right1Label(bandStop) : (returnToReadMenu ? tr(STR_BACK) : tr(STR_HOME)),
+      headerFocused ? band.right2Label(bandStop) : tr(STR_OPEN), tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

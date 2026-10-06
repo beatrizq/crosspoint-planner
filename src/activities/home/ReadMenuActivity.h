@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "activities/Activity.h"
+#include "components/StatusBand.h"
 #include "components/themes/BaseTheme.h"
 #include "util/ButtonNavigator.h"
 
@@ -64,4 +65,9 @@ class ReadMenuActivity final : public Activity {
   // "next" from here returns to selectedIndex == 0, "previous" from here
   // wraps to the last entry. Right2 here opens Sync All.
   bool headerFocused = false;
+  // The top of the screen -- status bar, today's calendar events, the newest pending
+  // alert (see StatusBand). While headerFocused, bandStop says which of them has
+  // focus; the whole band is one stop of this screen's loop, not just the status bar.
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
 };

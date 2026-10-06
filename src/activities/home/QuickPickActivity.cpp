@@ -25,16 +25,12 @@
 #include "activities/util/OptionsMenuActivity.h"
 #include "companion/CompanionRenderer.h"
 #include "companion/CompanionTracker.h"
+#include "components/StatusBand.h"
 #include "components/UITheme.h"
-#include "components/icons/bell24.h"
 #include "fontIds.h"
 #include "util/HomeAppOrder.h"
 #include "util/PlannerActions.h"
 #include "util/PlannerSync.h"
-
-#ifdef ENABLE_BLE_NOTIFY_SPIKE
-#include "network/BleNotificationQueue.h"
-#endif
 
 namespace {
 // One integer step down from a prior 5 (a user-requested ~15% size
@@ -75,22 +71,6 @@ constexpr int SECTION_TITLE_PAD = 14;
 constexpr int PROJECT_PILL_PADDING = 8;
 constexpr int PROJECT_PILL_RADIUS = 6;
 
-// Gap between the glance strip's own event lines, and between the strip and
-// the bubble below it. Tighter than LABEL_GAP (used below the sprite, where
-// the embedded Tasks section needs a real section break) -- these lines are
-// dense glance info, not a section boundary of their own.
-constexpr int GLANCE_LINE_GAP = 4;
-constexpr int GLANCE_STRIP_GAP = 10;
-// The gap between a glance line's own leading bullet/icon and its text.
-constexpr int GLANCE_ICON_GAP = 8;
-
-// The alert area (see this file's own header comment): padding above and
-// below its text, and how many lines the one alert shown may wrap over.
-constexpr int ALERT_ROW_PAD = 4;
-constexpr int ALERT_MAX_LINES = 3;
-// The bell icon in front of the alert (bell24.h is 24x24).
-constexpr int ALERT_ICON_SIZE = 24;
-
 // Right1 means "go Home" on every other screen, but the instant you land
 // here (this screen IS Home) it means "open Tasks" instead, since onEnter()
 // always lands focus on the tab bar with Tasks active. A reflexive second
@@ -128,21 +108,6 @@ void dimText(const GfxRenderer& renderer, const int x, const int y, const int fo
              const bool ink) {
   if (!ink) return;
   dimText(renderer, x, y, fontId, text);
-}
-
-// Draws a 1-bpp square icon (MSB first, bit 0 = ink -- the format
-// GfxRenderer::drawIcon() takes) in black, or in white for use on a filled
-// background. drawIcon() only inks black; this plots through the same orientation
-// mapping so the two line up pixel for pixel.
-void drawIconInk(const GfxRenderer& renderer, const uint8_t* bitmap, const int x, const int y, const int size,
-                 const bool black) {
-  const int rowBytes = (size + 7) / 8;
-  for (int row = 0; row < size; row++) {
-    for (int col = 0; col < size; col++) {
-      const uint8_t byte = bitmap[row * rowBytes + (col >> 3)];
-      if (((byte >> (7 - (col & 7))) & 1) == 0) renderer.drawPixel(x + (size - 1 - row), y + col, black);
-    }
-  }
 }
 
 // The Tasks section's title row: every entry on one line, the selected one in
@@ -279,7 +244,8 @@ void QuickPickActivity::onEnter() {
   // title row instead.
   focus = Focus::Embedded;
   if (onLogsEntry()) focusEmbeddedFirst();
-  lastAlertCount = pendingAlertCount();
+  band.setIncludeSyncHint(true);
+  band.poll();
   enteredAtMs = millis();
   requestUpdate(true);
 }
@@ -658,14 +624,10 @@ void QuickPickActivity::loop() {
     }
   }
 
-  // An alert arriving (or being cleared from the Alerts screen) swaps the header
-  // and glance strip for the alert area, or back -- repaint, and keep focus on
-  // a stop that still exists. Cheap: at most BleNotificationQueue::CAPACITY entries.
-  const size_t alertCount = pendingAlertCount();
-  if (alertCount != lastAlertCount) {
-    lastAlertCount = alertCount;
-    requestUpdate();
-  }
+  // An alert arriving (or being cleared from the Alerts screen) or a calendar event
+  // ending changes what the band shows -- repaint, and keep focus on a stop that
+  // still exists.
+  if (band.poll()) requestUpdate();
   reconcileFocus();
 
   // Re-checks the companion's mood (in particular, whether it's now inside
@@ -684,14 +646,6 @@ void QuickPickActivity::loop() {
       // own comment.
       idleVariant = static_cast<uint8_t>(esp_random() % companion::IDLE_BUBBLE_VARIANT_COUNT);
       if (companionVisible()) requestUpdate();
-    }
-    // An event ending drops its glance row, and nothing else would repaint for
-    // that -- so the same idle tick also repaints when the number of rows shown
-    // has changed since the last paint.
-    const int glanceRows = static_cast<int>(todaysEvents().size());
-    if (glanceRows != lastGlanceRowCount) {
-      lastGlanceRowCount = glanceRows;
-      requestUpdate();
     }
   }
 
@@ -795,24 +749,25 @@ void QuickPickActivity::loop() {
         }
         break;
       case Focus::Companion:
-        // Straight to the header when there's nothing in the glance strip
-        // to land on -- see todaysEvents()'s own comment; an empty strip
-        // means synced with genuinely nothing today, not a fallback line.
+        // Up into the band: its last stop (the alert if there is one, else the
+        // calendar rows, else the status bar).
         focusTopBlockLast();
         break;
-      case Focus::Glance:
-        focus = Focus::Header;
-        break;
-      case Focus::Alerts:
-        // Off the top of the screen, same as the header.
-        focusEmbeddedLast();
-        break;
       case Focus::Header:
-        // Off the top -- wrap to the last row of the active tab, or its tab
-        // bar when that tab is empty (the stops are always all reachable
-        // regardless of whether the active tab has any rows in it).
-        focusEmbeddedLast();
+      case Focus::Glance:
+      case Focus::Alerts: {
+        // Up through the band's stops; off the top of the screen -- wrap to the
+        // last row of the active tab, or its tab bar when that tab is empty (the
+        // stops are always all reachable regardless of whether the active tab has
+        // any rows in it).
+        StatusBand::Stop stop = bandStopFor(focus);
+        if (band.step(stop, /*forward=*/false)) {
+          focus = focusForBandStop(stop);
+        } else {
+          focusEmbeddedLast();
+        }
         break;
+      }
       case Focus::Embedded:
         if (tabBarFocused) {
           // Off the top of the tab bar -- move onto the title row above it.
@@ -862,20 +817,17 @@ void QuickPickActivity::loop() {
         break;
       }
       case Focus::Header:
-        // Straight past the glance strip when there's nothing on it to land
-        // on -- same reasoning as Left1's own Companion case above.
-        if (todaysEvents().empty()) {
-          focusAfterTopBlock();
+      case Focus::Glance:
+      case Focus::Alerts: {
+        // Down through the band's stops, then on to the companion.
+        StatusBand::Stop stop = bandStopFor(focus);
+        if (band.step(stop, /*forward=*/true)) {
+          focus = focusForBandStop(stop);
         } else {
-          focus = Focus::Glance;
+          focusAfterTopBlock();
         }
         break;
-      case Focus::Glance:
-        focusAfterTopBlock();
-        break;
-      case Focus::Alerts:
-        focusAfterTopBlock();
-        break;
+      }
       case Focus::Companion:
         // Onto the title row, the start of the Tasks section.
         focus = Focus::Projects;
@@ -897,15 +849,12 @@ void QuickPickActivity::loop() {
     }
     switch (focus) {
       case Focus::Alerts:
-#ifdef ENABLE_BLE_NOTIFY_SPIKE
-        // Dismiss the alert on top (the newest pending one); the next-newest
-        // takes its place. The last one going brings the header and glance
-        // strip back (reconcileFocus() moves focus there).
-        BLE_NOTIFICATIONS.dismissPending(0);
-        lastAlertCount = pendingAlertCount();
+        // Dismiss the alert on top (the newest pending one); the next-newest takes
+        // its place, and with the last one gone focus moves up to what is left of
+        // the band (reconcileFocus()).
+        band.handleRight2(StatusBand::Stop::Alert);
         reconcileFocus();
         requestUpdate();
-#endif
         break;
       case Focus::Companion:
         // The bubble only carries the companion's own remarks now -- nothing
@@ -1078,111 +1027,43 @@ void QuickPickActivity::renderTasksTab(const int top, const int height) const {
   }
 }
 
-std::vector<QuickPickActivity::GlanceEventRow> QuickPickActivity::todaysEvents() const {
-  std::vector<GlanceEventRow> rows;
-  const uint16_t today = plannerSync::todayLocalDate();
-  // Same fallback either way (no usable "today" to filter by is no more
-  // useful to the user than a never-synced cache) -- both mean this line
-  // cannot promise anything about what's actually happening today.
-  if (!GCAL_EVENTS.hasSynced() || today == civil::NO_DATE) {
-    rows.push_back(GlanceEventRow{std::string(tr(STR_GCAL_NEVER_SYNCED)), "", true});
-    return rows;
+StatusBand::Stop QuickPickActivity::bandStopFor(const Focus f) {
+  switch (f) {
+    case Focus::Header:
+      return StatusBand::Stop::StatusBar;
+    case Focus::Glance:
+      return StatusBand::Stop::Calendar;
+    case Focus::Alerts:
+      return StatusBand::Stop::Alert;
+    default:
+      return StatusBand::Stop::None;
   }
-  // Exact-day match, not the old ">= today" window: a sync can be hours or
-  // days old, and today's own local date (re-derived fresh here) can have
-  // moved on since, so an event dated "yesterday" in a stale cache simply
-  // no longer matches -- no separate staleness check needed the way the
-  // ">= today" comparison this replaced did.
-  // An event that has already ended is not worth a row: once the local time is
-  // at or past its end, it is dropped. Only a timed event with a known end that
-  // lies after its start can end today (an all-day one runs all day; an unknown
-  // end, or an end at or before the start -- one that runs past midnight -- is
-  // kept rather than guessed at), and only when the clock says what time it is.
-  uint16_t nowMinute = civil::NO_TIME;
-  {
-    uint16_t year = 0;
-    uint8_t month = 0;
-    uint8_t day = 0;
-    uint8_t hour = 0;
-    uint8_t minute = 0;
-    if (halClock.getUtcDateTime(year, month, day, hour, minute)) {
-      // clockUtcOffsetQ is biased by 48 (48 == UTC+0), the same clamp and bias
-      // every other local-time reader of it uses.
-      const int32_t offsetQuarterHours = static_cast<int32_t>(std::min<uint8_t>(SETTINGS.clockUtcOffsetQ, 104)) - 48;
-      nowMinute = companion::localMinuteOfDay(hour, minute, offsetQuarterHours);
-    }
-  }
-  for (const auto& event : GCAL_EVENTS.getEvents()) {
-    if (event.date != today) continue;
-    if (nowMinute != civil::NO_TIME && !event.isAllDay() && event.endMin != civil::NO_TIME &&
-        event.endMin > event.startMin && nowMinute >= event.endMin) {
-      continue;
-    }
-    GlanceEventRow row;
-    row.title = event.summary;
-    if (!event.isAllDay()) {
-      char time[10];
-      snprintf(time, sizeof(time), ", %02u:%02u", static_cast<unsigned>(event.startMin / 60),
-               static_cast<unsigned>(event.startMin % 60));
-      row.time = time;
-    }
-    rows.push_back(std::move(row));
-  }
-  // Empty (not a fallback placeholder row) when synced and there is
-  // genuinely nothing today -- the glance strip itself collapses to nothing
-  // in that case (see render()'s own glanceTextHeight/glanceStripHeight),
-  // rather than spending space on a "nothing today" line.
-  return rows;
 }
 
-size_t QuickPickActivity::pendingAlertCount() {
-#ifdef ENABLE_BLE_NOTIFY_SPIKE
-  return BLE_NOTIFICATIONS.getPendingCount();
-#else
-  return 0;
-#endif
-}
-
-bool QuickPickActivity::pendingAlertLine(const size_t k, char* out, const size_t outSize) {
-#ifdef ENABLE_BLE_NOTIFY_SPIKE
-  const auto* alert = BLE_NOTIFICATIONS.getPendingEntry(k);
-  if (alert == nullptr) return false;
-  if (alert->content[0] != '\0') {
-    snprintf(out, outSize, "%s: %s", alert->title, alert->content);
-  } else {
-    snprintf(out, outSize, "%s", alert->title);
+QuickPickActivity::Focus QuickPickActivity::focusForBandStop(const StatusBand::Stop stop) {
+  switch (stop) {
+    case StatusBand::Stop::Calendar:
+      return Focus::Glance;
+    case StatusBand::Stop::Alert:
+      return Focus::Alerts;
+    default:
+      return Focus::Header;
   }
-  return true;
-#else
-  (void)k;
-  (void)out;
-  (void)outSize;
-  return false;
-#endif
 }
 
 bool QuickPickActivity::companionVisible() { return SETTINGS.showCompanion != 0; }
 
 void QuickPickActivity::reconcileFocus() {
-  const size_t alerts = pendingAlertCount();
-  if (alerts > 0) {
-    // The alert area stands in for the header and glance strip.
-    if (focus == Focus::Header || focus == Focus::Glance) focus = Focus::Alerts;
-  } else if (focus == Focus::Alerts) {
-    focus = Focus::Header;
-  }
+  // A band stop that has gone away (the last alert was dismissed, the last event
+  // ended) falls back to the nearest one still there.
+  const StatusBand::Stop stop = bandStopFor(focus);
+  if (stop != StatusBand::Stop::None) focus = focusForBandStop(band.clamp(stop));
   if (focus == Focus::Companion && !companionVisible()) focus = Focus::Projects;
 }
 
-void QuickPickActivity::focusTopBlockFirst() { focus = pendingAlertCount() > 0 ? Focus::Alerts : Focus::Header; }
+void QuickPickActivity::focusTopBlockFirst() { focus = Focus::Header; }
 
-void QuickPickActivity::focusTopBlockLast() {
-  if (pendingAlertCount() > 0) {
-    focus = Focus::Alerts;
-  } else {
-    focus = todaysEvents().empty() ? Focus::Header : Focus::Glance;
-  }
-}
+void QuickPickActivity::focusTopBlockLast() { focus = focusForBandStop(band.last()); }
 
 void QuickPickActivity::focusAfterTopBlock() { focus = companionVisible() ? Focus::Companion : Focus::Projects; }
 
@@ -1202,163 +1083,23 @@ void QuickPickActivity::focusEmbeddedLast() {
 void QuickPickActivity::render(RenderLock&&) {
   renderer.clearScreen();
   reconcileFocus();
-  // While any alert is pending, the alert area takes the place of the header
-  // (clock/date/battery) and the glance strip -- see this file's own header
-  // comment. Both come back once the last one is dismissed.
-  const size_t alertCount = pendingAlertCount();
-  const bool showAlerts = alertCount > 0;
 
   const auto& metrics = UITheme::getInstance().getMetrics();
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  // Header stays at the very top, same as every other screen -- on Lyra/
-  // Lyra 3 Covers this is also where that theme's own clock+date+battery
-  // combo lives (LyraTheme::drawHeader draws it unconditionally into
-  // whatever rect it's given, regardless of title/subtitle); this screen
-  // does not draw a copy of that itself. Title and subtitle (the companion's
-  // name and its Age/Highscore) are both deliberately passed as nullptr --
-  // this header is the clock+date+battery row alone. On Lyra, title's own
-  // text and the header's rule underneath it are both drawn inside the same
-  // `if (title)` block (LyraTheme.cpp), and subtitle inside its own
-  // `if (subtitle)` block, so nullptr drops both while leaving the
-  // clock/date/battery combo above (drawn unconditionally by that same
-  // function) untouched. This is Lyra-specific: RoundedRaffTheme's own
-  // drawHeader() returns immediately on a null title, so on that theme this
-  // whole header band goes blank (battery included) rather than losing just
-  // the title/subtitle -- not something this screen can route around
-  // without a theme-level change. metrics.headerHeight itself is sized for
-  // a full title+subtitle header this screen no longer draws, so it is
-  // still passed to drawHeader() (its own contract, and title/subtitle draw
-  // at fixed offsets from rect.y regardless of rect.height anyway), but
-  // HEADER_CONTENT_HEIGHT -- not metrics.headerHeight -- is what this
-  // screen's own layout below actually uses, so the glance strip sits right
-  // under the clock/battery row instead of leaving the empty space
-  // metrics.headerHeight otherwise reserved for the title this row no
-  // longer has.
+  // The top of the screen is the shared status band (see StatusBand): the status
+  // bar, today's calendar events, then the newest pending alert, each present only
+  // when there is something to show, each a focus stop. This screen carries no
+  // title of its own, so the band is drawn untitled, with the status row sized to
+  // its clock/battery content (HEADER_CONTENT_HEIGHT) rather than the theme's full
+  // title-band header height. Title and subtitle are both left out of the status
+  // bar: on Lyra the clock/date/battery combo is drawn unconditionally, and the
+  // title and its rule only inside `if (title)`. That is Lyra-specific --
+  // RoundedRaffTheme's drawHeader() returns immediately on a null title, so on that
+  // theme the status row goes blank.
   const int headerTop = metrics.topPadding;
-  const Rect headerRect{0, headerTop, pageWidth, metrics.headerHeight};
-  if (!showAlerts) GUI.drawHeader(renderer, headerRect, /*title=*/nullptr, /*subtitle=*/nullptr, /*showRule=*/true);
-
-  // Hovering the header (see this file's own header comment): a true pixel
-  // invert (GfxRenderer::invertRect(), the same bit-flip invertScreen() does,
-  // scoped to this rect) rather than a fillRect() -- fillRect would just
-  // paint over the clock/date/battery LyraTheme already drew, hiding it
-  // instead of turning it white the way an opaque fill can't without also
-  // redrawing (and thus duplicating) that theme's own content. Scoped to
-  // HEADER_HIGHLIGHT_HEIGHT (see its own comment), not the full header rect,
-  // so only the actual clock/battery row inverts, not the empty space below
-  // it or the glance strip's own icon/text right after that.
-  if (!showAlerts && focus == Focus::Header) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width, HEADER_HIGHLIGHT_HEIGHT);
-  }
-
-  // The glance strip (see this file's own header comment) sits right under
-  // the header -- purely informational itself (it neither joins the
-  // Left1/Left2 loop below nor sits inside either focus highlight), but
-  // contentTop (defined after it) is what the companion figure/bubble and
-  // its own focus box are actually positioned from. Today's Calendar events
-  // only, and none at all while the alert area is showing instead. One
-  // bulleted line per event (a plain dot, not that app's own icon: unlike the single-line rows this replaced, there can
-  // be more than one), so the row count -- and this strip's own height -- is whatever todaysEvents() actually returns,
-  // not a fixed GLANCE_ROW_COUNT.
-  const auto glanceRows = todaysEvents();
-  const int glanceLineH = renderer.getLineHeight(UI_10_FONT_ID);
-  const int glanceStripTop = headerTop + HEADER_CONTENT_HEIGHT;
-  // Zero for both when there is nothing today -- genuinely no space spent on
-  // an empty strip, not even the breathing-room gap, rather than glanceRows'
-  // old guaranteed-non-empty invariant (a fallback placeholder row) this
-  // depended on. glanceRows.size() is unsigned, so the empty case is handled
-  // explicitly rather than letting size()-1 underflow.
-  const int glanceTextHeight = glanceRows.empty() ? 0
-                                                  : static_cast<int>(glanceRows.size()) * glanceLineH +
-                                                        static_cast<int>(glanceRows.size() - 1) * GLANCE_LINE_GAP;
-  const int glanceStripHeight = glanceRows.empty() ? 0 : glanceTextHeight + GLANCE_STRIP_GAP;
-  // The focus invert (below) spans the full glanceStripHeight -- so the text
-  // itself is nudged down by half of GLANCE_STRIP_GAP here, splitting that
-  // gap evenly above and below the glyphs instead of leaving it all beneath
-  // them.
-  const int glanceVerticalOffset = (glanceStripHeight - glanceTextHeight) / 2;
-  {
-    constexpr int BULLET_SIZE = 6;
-    const int bulletX = metrics.contentSidePadding;
-    const int textX = bulletX + BULLET_SIZE + GLANCE_ICON_GAP;
-    const int glanceMaxWidth = pageWidth - metrics.contentSidePadding * 2 - BULLET_SIZE - GLANCE_ICON_GAP;
-    int rowY = glanceStripTop + glanceVerticalOffset;
-    // Not drawn while the alert area stands in for the strip (its rows are
-    // still counted above, for the band the alert area takes over).
-    for (size_t i = 0; !showAlerts && i < glanceRows.size(); i++) {
-      const auto& row = glanceRows[i];
-      // No bullet for a fallback row (not synced yet / nothing today) --
-      // it isn't an event, so it shouldn't read as one.
-      if (!row.isFallback) {
-        const int bulletY = rowY + (glanceLineH - BULLET_SIZE) / 2;
-        renderer.fillRoundedRect(bulletX, bulletY, BULLET_SIZE, BULLET_SIZE, BULLET_SIZE / 2, Color::Black);
-      }
-      const std::string mainShown = renderer.truncatedText(UI_10_FONT_ID, row.title.c_str(), glanceMaxWidth);
-      renderer.drawText(UI_10_FONT_ID, textX, rowY, mainShown.c_str());
-      // The event's own time, dimmed as secondary detail next to its title
-      // -- empty for an all-day event or a fallback row (see
-      // todaysEvents()'s own comment) -- only drawn when the title itself
-      // wasn't truncated away, and only as much of it as still fits.
-      if (!row.time.empty() && mainShown == row.title) {
-        const int mainWidth = renderer.getTextWidth(UI_10_FONT_ID, mainShown.c_str());
-        const int dimMaxWidth = glanceMaxWidth - mainWidth;
-        if (dimMaxWidth > 0) {
-          const int dimX = textX + mainWidth;
-          const std::string dimShown = renderer.truncatedText(UI_10_FONT_ID, row.time.c_str(), dimMaxWidth);
-          renderer.drawText(UI_10_FONT_ID, dimX, rowY, dimShown.c_str());
-          dimText(renderer, dimX, rowY, UI_10_FONT_ID, dimShown.c_str());
-        }
-      }
-      rowY += glanceLineH + GLANCE_LINE_GAP;
-    }
-  }
-  // Hovering the glance strip (see this file's own header comment): a true
-  // pixel invert over the whole strip, the same technique the header and
-  // the bubble already use when focused -- see glanceVerticalOffset's own
-  // comment for how the text stays centred within this box.
-  if (focus == Focus::Glance) {
-    renderer.invertRect(0, glanceStripTop, pageWidth, glanceStripHeight);
-  }
-
-  // The alert area, in place of the header and glance strip above (both are
-  // skipped while any alert is pending). Shows one alert at a time -- the
-  // newest pending one, wrapped over up to ALERT_MAX_LINES lines -- with the
-  // older ones waiting underneath it until it is dismissed. Inverted when
-  // focused, same as the header and glance strip it stands in for.
-  int alertsHeight = 0;
-  if (showAlerts) {
-    // The alerts' own bell (the icon the glance strip's alert line used to carry)
-    // leads the text, in place of the calendar rows' dot.
-    const int iconX = metrics.contentSidePadding;
-    const int textX = iconX + ALERT_ICON_SIZE + GLANCE_ICON_GAP;
-    const int maxWidth = pageWidth - metrics.contentSidePadding * 2 - ALERT_ICON_SIZE - GLANCE_ICON_GAP;
-    char line[192];
-    if (pendingAlertLine(0, line, sizeof(line))) {
-      const auto fit =
-          companion::fitBubbleText(renderer, UI_10_FONT_ID, line, maxWidth, /*minTextWidth=*/0, ALERT_MAX_LINES);
-      const int textHeight = static_cast<int>(fit.lines.size()) * glanceLineH;
-      // Exactly the band the header and glance strip would occupy (so the
-      // companion below does not jump when an alert comes or goes), grown only
-      // if the alert's own text needs more -- and the text centred within it.
-      alertsHeight = std::max(HEADER_CONTENT_HEIGHT + glanceStripHeight, textHeight + ALERT_ROW_PAD * 2);
-      const bool selected = focus == Focus::Alerts;
-      if (selected) renderer.fillRect(0, headerTop, pageWidth, alertsHeight);
-      int textY = headerTop + (alertsHeight - textHeight) / 2;
-      // On the first line of text, its centre on that line's centre.
-      drawIconInk(renderer, Bell24Icon, iconX, textY + (glanceLineH - ALERT_ICON_SIZE) / 2, ALERT_ICON_SIZE,
-                  /*black=*/!selected);
-      for (const auto& wrapped : fit.lines) {
-        renderer.drawText(UI_10_FONT_ID, textX, textY, wrapped.c_str(), !selected);
-        textY += glanceLineH;
-      }
-    }
-  }
-
-  // SELECTION_BOX_PADDING here, not metrics.verticalSpacing: a tighter gap
-  // than the old, larger vertical spacing this replaced.
-  const int topBlockBottom = showAlerts ? headerTop + alertsHeight : glanceStripTop + glanceStripHeight;
+  const int topBlockBottom = band.drawUntitled(renderer, headerTop, HEADER_CONTENT_HEIGHT, bandStopFor(focus));
   const int contentTop = topBlockBottom + SELECTION_BOX_PADDING;
   const int contentBottom = pageHeight - metrics.buttonHintsHeight - metrics.buttonHintsGap;
   const int totalContentHeight = contentBottom - contentTop;

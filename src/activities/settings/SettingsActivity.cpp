@@ -180,6 +180,9 @@ void SettingsActivity::onEnter() {
   selectedCategoryIndex = 0;
   selectedSettingIndex = 0;
   headerFocused = false;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.setEnabled(!isSubmenu);
+  band.poll();
   preserveQuickResumeTimeoutOn =
       SETTINGS.timeoutSleepScreen == CrossPointSettings::TIMEOUT_SLEEP_SCREEN::TIMEOUT_QUICK_RESUME;
   quickResumeTimeoutAutoEnabled = false;
@@ -214,9 +217,22 @@ void SettingsActivity::loop() {
 
   bool hasChangedCategory = false;
 
+  // An alert arriving or being dismissed elsewhere, or a calendar event ending, changes
+  // what the band shows: repaint, and keep focus on a stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (headerFocused) bandStop = band.clamp(bandStop);
+
   // Handle actions with early return
   if (mappedInput.wasPressed(MappedInputManager::Button::Right2)) {
     if (headerFocused) {
+      if (bandStop != StatusBand::Stop::StatusBar) {
+        // Dismisses the alert (the next-newest takes its place); nothing to do on
+        // the calendar rows.
+        band.handleRight2(bandStop);
+        bandStop = band.clamp(bandStop);
+        requestUpdate();
+        return;
+      }
       activityManager.goToSyncAll([] { activityManager.goToSettings(); });
       return;
     }
@@ -232,6 +248,8 @@ void SettingsActivity::loop() {
   }
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) {
+    // On the calendar rows or the alert, Right1 opens that screen.
+    if (headerFocused && band.handleRight1(bandStop)) return;
     // Two-level Back, the same as the planner screens: from a setting row
     // it first surfaces the cursor to the category tab bar (labelled Back, see
     // render()); only from the tab bar or the header does it leave (labelled
@@ -263,11 +281,12 @@ void SettingsActivity::loop() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   int tx = 0;
   int ty = 0;
-  const int tabTop = metrics.topPadding + metrics.headerHeight;
-  const int listTop = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
-  const int listHeight =
-      renderer.getScreenHeight() - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight +
-                                    metrics.buttonHintsHeight + metrics.buttonHintsGap);
+  // Where the header (and the band above its title) ended on screen.
+  const int headerBottom = band.bottom(renderer);
+  const int tabTop = headerBottom;
+  const int listTop = headerBottom + metrics.tabBarHeight + metrics.verticalSpacing;
+  const int listHeight = renderer.getScreenHeight() -
+                         (headerBottom + metrics.tabBarHeight + metrics.buttonHintsHeight + metrics.buttonHintsGap);
   auto buildTabs = [&]() {
     std::vector<TabInfo> tabs;
     tabs.reserve(categoryCount());
@@ -339,8 +358,8 @@ void SettingsActivity::loop() {
   // Handle navigation
   const auto& navMetrics = UITheme::getInstance().getMetrics();
   const int settingsListHeight =
-      renderer.getScreenHeight() - (navMetrics.topPadding + navMetrics.headerHeight + navMetrics.tabBarHeight +
-                                    navMetrics.buttonHintsHeight + navMetrics.buttonHintsGap);
+      renderer.getScreenHeight() -
+      (band.bottom(renderer) + navMetrics.tabBarHeight + navMetrics.buttonHintsHeight + navMetrics.buttonHintsGap);
   const int settingsPageItems = GUI.getListPageItems(settingsListHeight, false);
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up) {
@@ -364,10 +383,14 @@ void SettingsActivity::loop() {
 
   buttonNavigator.onNextRelease([this] {
     if (headerFocused) {
-      headerFocused = false;
-      selectedSettingIndex = 0;
+      // Down through the band's stops, then to the category tab bar.
+      if (!band.step(bandStop, /*forward=*/true)) {
+        headerFocused = false;
+        selectedSettingIndex = 0;
+      }
     } else if (selectedSettingIndex == settingsCount) {
       headerFocused = true;
+      bandStop = band.first();
     } else {
       selectedSettingIndex = ButtonNavigator::nextIndex(selectedSettingIndex, settingsCount + 1);
     }
@@ -376,10 +399,14 @@ void SettingsActivity::loop() {
 
   buttonNavigator.onPreviousRelease([this] {
     if (headerFocused) {
-      headerFocused = false;
-      selectedSettingIndex = settingsCount;
+      // Up through the band's stops, then wrap to the last setting.
+      if (!band.step(bandStop, /*forward=*/false)) {
+        headerFocused = false;
+        selectedSettingIndex = settingsCount;
+      }
     } else if (selectedSettingIndex == 0) {
       headerFocused = true;
+      bandStop = band.last();
     } else {
       selectedSettingIndex = ButtonNavigator::previousIndex(selectedSettingIndex, settingsCount + 1);
     }
@@ -630,30 +657,24 @@ void SettingsActivity::render(RenderLock&&) {
 
   const auto& metrics = UITheme::getInstance().getMetrics();
 
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, isSubmenu ? I18N.get(bucketName(tabBuckets[0])) : tr(STR_SETTINGS_TITLE),
-                 isSubmenu ? nullptr : CROSSPOINT_VERSION);
-  // Hovering the header (see headerFocused's own comment): a true pixel
-  // invert, the same technique QuickPickActivity's own header focus uses.
-  if (headerFocused) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width,
-                        std::min(HEADER_FOCUS_HIGHLIGHT_HEIGHT, headerRect.height));
-  }
+  if (headerFocused) bandStop = band.clamp(bandStop);
+  const int headerBottom =
+      band.drawTitled(renderer, isSubmenu ? I18N.get(bucketName(tabBuckets[0])) : tr(STR_SETTINGS_TITLE),
+                      isSubmenu ? nullptr : CROSSPOINT_VERSION, headerFocused ? bandStop : StatusBand::Stop::None);
 
   std::vector<TabInfo> tabs;
   tabs.reserve(categoryCount());
   for (int i = 0; i < categoryCount(); i++) {
     tabs.push_back({I18N.get(bucketName(tabBuckets[static_cast<size_t>(i)])), selectedCategoryIndex == i});
   }
-  GUI.drawTabBar(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight}, tabs,
+  GUI.drawTabBar(renderer, Rect{0, headerBottom, pageWidth, metrics.tabBarHeight}, tabs,
                  selectedSettingIndex == 0 && !headerFocused);
 
   const auto& settings = *currentSettings;
   GUI.drawList(
       renderer,
-      Rect{0, metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing, pageWidth,
-           pageHeight - (metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.buttonHintsHeight +
-                         metrics.buttonHintsGap)},
+      Rect{0, headerBottom + metrics.tabBarHeight + metrics.verticalSpacing, pageWidth,
+           pageHeight - (headerBottom + metrics.tabBarHeight + metrics.buttonHintsHeight + metrics.buttonHintsGap)},
       settingsCount, headerFocused ? -1 : selectedSettingIndex - 1,
       [&settings](int index) { return std::string(I18N.get(settings[index].nameId)); }, nullptr, nullptr,
       [&settings](int i) {
@@ -706,7 +727,7 @@ void SettingsActivity::render(RenderLock&&) {
 
   // Draw help text
   const auto confirmLabel =
-      headerFocused ? tr(STR_SYNC_ALL)
+      headerFocused ? band.right2Label(bandStop)
       : (selectedSettingIndex == 0)
           ? (categoryCount() > 1
                  ? I18N.get(bucketName(tabBuckets[static_cast<size_t>((selectedCategoryIndex + 1) % categoryCount())]))
@@ -718,8 +739,9 @@ void SettingsActivity::render(RenderLock&&) {
   // Back on a setting row (it surfaces to the category tab bar), Home once
   // already there or on the header -- see this file's own Right1 handler.
   const bool rowFocused = !headerFocused && selectedSettingIndex > 0;
-  const auto labels = mappedInput.mapLabels(!headerFocused && (rowFocused || isSubmenu) ? tr(STR_BACK) : tr(STR_HOME),
-                                            confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(
+      headerFocused ? band.right1Label(bandStop) : ((rowFocused || isSubmenu) ? tr(STR_BACK) : tr(STR_HOME)),
+      confirmLabel, tr(STR_DIR_UP), tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   // Always use standard refresh for settings screen

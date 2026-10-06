@@ -1,6 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
+#include "components/StatusBand.h"
 #include "util/ButtonNavigator.h"
 
 /**
@@ -30,9 +31,10 @@ class MainMenuActivity final : public Activity {
   bool isHomeActivity() const override { return true; }
 
  private:
-  // The stops of the focus loop, in visual top-to-bottom order.
-  enum class Stop : uint8_t { StatusBar, Read, Planner };
-  static constexpr int STOP_COUNT = 3;
+  // The stops of the focus loop, in visual top-to-bottom order. Band is the whole
+  // top of the screen -- the status bar, today's calendar events and the newest
+  // pending alert, each its own stop (bandStop says which) -- then the two tiles.
+  enum class Stop : uint8_t { Band, Read, Planner };
 
   void activateFocused();
   // Geometry shared by render() and the touch hit-testing in loop(), so the two
@@ -45,6 +47,8 @@ class MainMenuActivity final : public Activity {
 
   ButtonNavigator buttonNavigator;
   Stop focus = Stop::Read;
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
   // Home can be entered while Right1 is still held (e.g. leaving Settings with
   // it): ignore that stale release until a fresh press is seen here.
   bool settingsPressSeen = false;
