@@ -117,8 +117,7 @@ void SettingsActivity::rebuildSettingsLists() {
     systemSettings.push_back(SettingInfo::Action(StrId::STR_HOME_BUTTON, SettingAction::HomeButton));
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
-  // Where books come from and how reading progress follows them around.
-  librarySettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
+  // Where books come from.
   librarySettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   plannerSettings.push_back(SettingInfo::Action(StrId::STR_TODOIST, SettingAction::Todoist));
   plannerSettings.push_back(SettingInfo::Action(StrId::STR_CALENDAR, SettingAction::GoogleCalendar));
@@ -144,6 +143,10 @@ void SettingsActivity::rebuildSettingsLists() {
                         SettingInfo::Action(StrId::STR_CAT_CONTROLS, SettingAction::ControlsMenu));
   readerSettings.insert(readerSettings.begin() + 3,
                         SettingInfo::Action(StrId::STR_CAT_LIBRARY, SettingAction::LibraryMenu));
+  // Directly under Reader, not inside a submenu: the Sync screen needs heap headroom for TLS,
+  // and every stacked Settings screen holds its own copy of the lists.
+  readerSettings.insert(readerSettings.begin() + 4,
+                        SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   // Clear Reading Cache sits just ahead of Hide Battery %, so the Reader tab ends
   // with the cache action and then the two status-bar entries.
   {
@@ -532,7 +535,20 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::KOReaderSync:
-        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
+        // The sync screens need heap headroom for TLS; drop this screen's lists while they run
+        // (swap, not clear(), so the capacity is released) and rebuild them on return.
+        std::vector<SettingInfo>().swap(displaySettings);
+        std::vector<SettingInfo>().swap(readerSettings);
+        std::vector<SettingInfo>().swap(librarySettings);
+        std::vector<SettingInfo>().swap(controlsSettings);
+        std::vector<SettingInfo>().swap(systemSettings);
+        std::vector<SettingInfo>().swap(plannerSettings);
+        settingsCount = 0;
+        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) {
+                                 SETTINGS.saveToFile();
+                                 rebuildSettingsLists();
+                               });
         break;
       case SettingAction::Todoist:
         startActivityForResult(std::make_unique<TodoistSettingsActivity>(renderer, mappedInput), resultHandler);
