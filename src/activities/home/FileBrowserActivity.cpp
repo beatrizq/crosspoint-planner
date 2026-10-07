@@ -8,6 +8,7 @@
 #include <Utf8.h>
 
 #include <algorithm>
+#include <cstring>
 #include <functional>
 
 #include "CrossPointSettings.h"
@@ -386,17 +387,52 @@ void FileBrowserActivity::showEntryActions() {
 
   const bool isDirectory = files[nav.selected].back() == '/';
   static constexpr StrId FILE_OPTIONS[] = {StrId::STR_OPEN, StrId::STR_DELETE, StrId::STR_RENAME};
-  static constexpr StrId DIRECTORY_OPTIONS[] = {StrId::STR_OPEN, StrId::STR_DELETE};
-  optionPopup.show(StrId::STR_FILENAME, isDirectory ? DIRECTORY_OPTIONS : FILE_OPTIONS, isDirectory ? 2 : 3, 0,
-                   [this](const int index) {
-                     if (index == 0) {
-                       activateSelected();
-                     } else if (index == 1) {
-                       deleteSelected();
-                     } else if (index == 2) {
-                       startRename();
-                     }
-                   });
+  static constexpr StrId DIRECTORY_OPTIONS[] = {StrId::STR_OPEN, StrId::STR_DELETE, StrId::STR_SET_START_FOLDER};
+  static constexpr StrId START_DIRECTORY_OPTIONS[] = {StrId::STR_OPEN, StrId::STR_DELETE,
+                                                      StrId::STR_CLEAR_START_FOLDER};
+  const StrId* options = FILE_OPTIONS;
+  if (isDirectory) options = isStartFolder(selectedFolderPath()) ? START_DIRECTORY_OPTIONS : DIRECTORY_OPTIONS;
+  optionPopup.show(StrId::STR_FILENAME, options, 3, 0, [this, isDirectory](const int index) {
+    if (index == 0) {
+      activateSelected();
+    } else if (index == 1) {
+      deleteSelected();
+    } else if (index == 2) {
+      if (isDirectory) {
+        toggleStartFolder();
+      } else {
+        startRename();
+      }
+    }
+  });
+  requestUpdate();
+}
+
+std::string FileBrowserActivity::selectedFolderPath() const {
+  std::string path = basepath;
+  if (path.back() != '/') path += "/";
+  path += files[nav.selected];
+  path.pop_back();  // folder entries carry a trailing slash
+  return path;
+}
+
+bool FileBrowserActivity::isStartFolder(const std::string& path) const { return path == SETTINGS.browseStartFolder; }
+
+void FileBrowserActivity::toggleStartFolder() {
+  if (files.empty() || nav.selected < 0 || nav.selected >= listCount()) return;
+
+  const std::string path = selectedFolderPath();
+  if (isStartFolder(path)) {
+    SETTINGS.browseStartFolder[0] = '\0';
+  } else if (path.size() >= sizeof(SETTINGS.browseStartFolder)) {
+    LOG_ERR("FileBrowser", "Start folder path too long (%u bytes): %s", static_cast<unsigned>(path.size()),
+            path.c_str());
+    return;
+  } else {
+    memcpy(SETTINGS.browseStartFolder, path.c_str(), path.size() + 1);
+  }
+  SETTINGS.saveToFile();
+  LOG_DBG("FileBrowser", "Start folder: %s", SETTINGS.browseStartFolder[0] ? SETTINGS.browseStartFolder : "(root)");
   requestUpdate();
 }
 

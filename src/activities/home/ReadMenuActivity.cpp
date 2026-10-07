@@ -52,7 +52,7 @@ void ReadMenuActivity::activateSelected() {
   if (entryIdx < 0 || entryIdx >= static_cast<int>(entries.size())) return;
   switch (entries[entryIdx].item) {
     case HomeMenuItem::FILE_BROWSER:
-      activityManager.goToFileBrowser("/", /*returnToReadMenu=*/true);
+      activityManager.goToFileBrowser({}, /*returnToReadMenu=*/true);
       break;
     case HomeMenuItem::LIBRARY:
       activityManager.goToLibrary(/*returnToReadMenu=*/true);

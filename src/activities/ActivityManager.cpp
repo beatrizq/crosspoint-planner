@@ -5,6 +5,7 @@
 #include <FsHelpers.h>
 #include <HalDisplay.h>
 #include <HalPowerManager.h>
+#include <HalStorage.h>
 #include <Logging.h>
 #include <Memory.h>
 #include <VectorFontSupport.h>
@@ -275,6 +276,14 @@ void ActivityManager::goToUsbDrive() {
 void ActivityManager::goToSettings() { replaceActivity(std::make_unique<SettingsActivity>(renderer, mappedInput)); }
 
 void ActivityManager::goToFileBrowser(std::string path, const bool returnToReadMenu) {
+  // No explicit path: open the start folder, falling back to the root if it was removed.
+  if (path.empty()) {
+    path = "/";
+    if (SETTINGS.browseStartFolder[0] != '\0') {
+      auto dir = Storage.open(SETTINGS.browseStartFolder);
+      if (dir && dir.isDirectory()) path = SETTINGS.browseStartFolder;
+    }
+  }
   replaceActivity(std::make_unique<FileBrowserActivity>(renderer, mappedInput, std::move(path),
                                                         FileBrowserActivity::Mode::Books, returnToReadMenu));
 }
