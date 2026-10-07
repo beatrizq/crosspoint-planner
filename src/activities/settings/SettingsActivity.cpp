@@ -238,8 +238,9 @@ void SettingsActivity::loop() {
   if (band.poll()) requestUpdate();
   if (headerFocused) bandStop = band.clamp(bandStop);
 
-  // Handle actions with early return
-  if (mappedInput.wasPressed(MappedInputManager::Button::Right2)) {
+  // Acts on the release: a popup opened on the press would still see this button's release
+  // and select its current option, closing at once.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (headerFocused) {
       if (bandStop != StatusBand::Stop::StatusBar) {
         // Dismisses the alert (the next-newest takes its place); nothing to do on
