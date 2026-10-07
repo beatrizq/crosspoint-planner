@@ -297,6 +297,7 @@ void CrossPointWebServerActivity::startWebServer() {
 
   // Create the web server instance
   webServer.reset(new CrossPointWebServer());
+  webServer->setAbortCheck(&CrossPointWebServerActivity::pollExit, this);
   webServer->begin();
 
   if (webServer->isRunning()) {
@@ -315,9 +316,24 @@ void CrossPointWebServerActivity::startWebServer() {
   }
 }
 
+bool CrossPointWebServerActivity::pollExit(void* ctx) {
+  auto* self = static_cast<CrossPointWebServerActivity*>(ctx);
+  // A release is seen once; latch it so loop() can still act on it after the request returns.
+  self->mappedInput.update(true);
+  if (self->mappedInput.wasReleased(MappedInputManager::Button::Right1) || self->mappedInput.wasHomeGesture()) {
+    self->exitRequested = true;
+  }
+  return self->exitRequested;
+}
+
 void CrossPointWebServerActivity::loop() {
   // Handle different states
   if (state == WebServerActivityState::SERVER_RUNNING) {
+    if (exitRequested) {
+      exitActivity();
+      return;
+    }
+
     // Handle DNS requests for captive portal (AP mode only)
     if (isApMode && dnsServer) {
       dnsServer->processNextRequest();
@@ -358,6 +374,11 @@ void CrossPointWebServerActivity::loop() {
           if (rssi < -75) {
             LOG_DBG("WEBACT", "Warning: Weak WiFi signal: %d dBm", rssi);
           }
+          const bool weak = weakSignal ? rssi < -77 : rssi < -80;
+          if (weak != weakSignal) {
+            weakSignal = weak;
+            repaint = true;
+          }
           const int bars = barsForRssi(rssi, lastWifiBars);
           if (bars != lastWifiBars) {
             lastWifiBars = bars;
@@ -385,6 +406,10 @@ void CrossPointWebServerActivity::loop() {
       constexpr int MAX_ITERATIONS = 500;
       for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
         webServer->handleClient();
+        if (exitRequested) {
+          exitActivity();
+          return;
+        }
         // Reset watchdog every 32 iterations
         if ((i & 0x1F) == 0x1F) {
           resetTaskWatchdogIfSubscribed();
@@ -511,6 +536,10 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     // Also show hostname URL
     std::string hostnameUrl = std::string(tr(STR_OR_HTTP_PREFIX)) + AP_HOSTNAME + ".local/";
     renderer.drawCenteredText(SMALL_FONT_ID, startY, hostnameUrl.c_str(), true);
+    if (weakSignal) {
+      startY += renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing;
+      renderer.drawCenteredText(SMALL_FONT_ID, startY, tr(STR_WEAK_SIGNAL_HINT), true, EpdFontFamily::BOLD);
+    }
   }
 
   const auto labels =

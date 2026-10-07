@@ -7,6 +7,7 @@
 #include <HalStorage.h>
 #include <LibraryBuilder.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 #include <esp_efuse.h>
 #include <esp_efuse_table.h>
@@ -452,7 +453,7 @@ void CrossPointWebServer::handleStatus() const {
   server->send(200, "application/json", response);
 }
 
-void CrossPointWebServer::scanFiles(const char* path, const std::function<void(FileInfo)>& callback) const {
+void CrossPointWebServer::scanFiles(const char* path, const std::function<bool(FileInfo)>& callback) const {
   HalFile root = Storage.open(path);
   if (!root) {
     LOG_DBG("WEB", "Failed to open directory: %s", path);
@@ -486,6 +487,7 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
       }
     }
 
+    bool keepGoing = true;
     if (!shouldHide) {
       FileInfo info;
       info.name = fileName;
@@ -499,12 +501,13 @@ void CrossPointWebServer::scanFiles(const char* path, const std::function<void(F
         info.isEpub = isEpubFile(info.name);
       }
 
-      callback(info);
+      keepGoing = callback(info);
     }
 
     file.close();
     yield();                          // Yield to allow WiFi and other tasks to process during long scans
     resetTaskWatchdogIfSubscribed();  // Reset watchdog to prevent timeout on large directories
+    if (!keepGoing) break;
     file = root.openNextFile();
   }
   root.close();
@@ -517,42 +520,78 @@ void CrossPointWebServer::handleFileList() const {
 }
 
 void CrossPointWebServer::handleFileListData() const {
-  // Get current path from query string (default to root)
+  // Entries are packed into one buffer and sent in few writes: on a weak link every small
+  // chunked write can wait for its own ACK. A listing that outlasts the time limit is cut short.
+  constexpr size_t BATCH_BYTES = 1024;
+  constexpr size_t MAX_ENTRY_BYTES = 512;
+  constexpr unsigned long LISTING_TIME_LIMIT_MS = 20000;
+
   String currentPath = "/";
   if (server->hasArg("path")) {
     currentPath = normalizeWebPath(server->arg("path"));
   }
 
+  auto batch = makeUniqueNoThrow<char[]>(BATCH_BYTES + 1);
+  if (!batch) {
+    LOG_ERR("WEB", "OOM: %u byte listing buffer", static_cast<unsigned>(BATCH_BYTES + 1));
+    server->send(500, "text/plain", "Out of memory");
+    return;
+  }
+
   server->setContentLength(CONTENT_LENGTH_UNKNOWN);
   server->send(200, "application/json", "");
-  server->sendContent("[");
-  char output[512];
-  constexpr size_t outputSize = sizeof(output);
+
+  size_t used = 0;
+  batch[used++] = '[';
   bool seenFirst = false;
+  bool aborted = false;
+  bool timedOut = false;
+  const unsigned long deadline = millis() + LISTING_TIME_LIMIT_MS;
   JsonDocument doc;
 
-  scanFiles(currentPath.c_str(), [this, &output, &doc, seenFirst](const FileInfo& info) mutable {
+  scanFiles(currentPath.c_str(), [&](const FileInfo& info) {
+    if (abortCheck && abortCheck(abortCtx)) {
+      aborted = true;
+      return false;
+    }
+    if (static_cast<long>(millis() - deadline) > 0) {
+      timedOut = true;
+      return false;
+    }
+
     doc.clear();
     doc["name"] = info.name;
     doc["size"] = info.size;
     doc["isDirectory"] = info.isDirectory;
     doc["isEpub"] = info.isEpub;
 
-    const size_t written = serializeJson(doc, output, outputSize);
-    if (written >= outputSize) {
-      // JSON output truncated; skip this entry to avoid sending malformed JSON
+    if (used + 1 + MAX_ENTRY_BYTES > BATCH_BYTES) {
+      server->sendContent(batch.get(), used);
+      used = 0;
+    }
+    const size_t entryStart = used;
+    if (seenFirst) batch[used++] = ',';
+    const size_t written = serializeJson(doc, batch.get() + used, BATCH_BYTES - used);
+    if (written >= BATCH_BYTES - used) {
+      // Output truncated; drop the entry so the JSON stays well formed
       LOG_DBG("WEB", "Skipping file entry with oversized JSON for name: %s", info.name.c_str());
-      return;
+      used = entryStart;
+      return true;
     }
-
-    if (seenFirst) {
-      server->sendContent(",");
-    } else {
-      seenFirst = true;
-    }
-    server->sendContent(output);
+    used += written;
+    seenFirst = true;
+    return true;
   });
-  server->sendContent("]");
+
+  if (aborted) {
+    LOG_DBG("WEB", "File listing abandoned: exit requested");
+    return;
+  }
+  if (timedOut) {
+    LOG_ERR("WEB", "File listing for %s cut short after %lu ms", currentPath.c_str(), LISTING_TIME_LIMIT_MS);
+  }
+  batch[used++] = ']';
+  server->sendContent(batch.get(), used);
   // End of streamed response, empty chunk to signal client
   server->sendContent("");
   LOG_DBG("WEB", "Served file listing page for path: %s", currentPath.c_str());

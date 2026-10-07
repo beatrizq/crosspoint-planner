@@ -57,6 +57,12 @@ class CrossPointWebServerActivity final : public Activity {
   // back to themselves via ActivityManager::goToFileTransfer(); Home otherwise.
   FileTransferReturn returnTo = FileTransferReturn::Home;
 
+  // Set by pollExit() when Back is released while the server is busy with a long response.
+  bool exitRequested = false;
+  // Signal reads weak (with hysteresis); drives the on-screen hotspot hint.
+  bool weakSignal = false;
+  static bool pollExit(void* ctx);
+
   void renderServerRunning() const;
   void renderWifiIndicator(int subHeaderTop) const;
 
