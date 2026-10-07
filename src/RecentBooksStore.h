@@ -10,6 +10,7 @@ struct RecentBook {
   std::string title;
   std::string author;
   std::string coverBmpPath;
+  int progressPercent = -1;  // filled in by the Read menu for the hero card; not persisted, -1 = unknown
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };

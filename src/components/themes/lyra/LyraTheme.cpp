@@ -831,24 +831,56 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     // full-width band with no column competing for it, so there is room for
     // them again.
     const int textX = tileX + hPaddingInSelection + coverWidth + LyraMetrics::values.contentSidePadding;
-    const int textRight = rect.x + rect.width - LyraMetrics::values.contentSidePadding;
+    // Stops short of the selection fill's edge by the same inset the cover sits in from its left edge.
+    const int textRight = rect.x + rect.width - LyraMetrics::values.contentSidePadding - hPaddingInSelection;
     const int textWidth = textRight - textX;
     if (textWidth > 0) {
-      const auto lines = renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, 3);
+      constexpr int barHeight = 12;
+      constexpr int barGap = 10;
+      constexpr int barInset = 2;
+      const bool showBar = SETTINGS.showHeroProgressBar && book.progressPercent >= 0;
+      char percentText[8] = "";
+      if (showBar) snprintf(percentText, sizeof(percentText), "%d%%", book.progressPercent);
+
+      const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+      const int authorHeight = book.author.empty() ? 0 : renderer.getLineHeight(UI_10_FONT_ID) * 3 / 2;
+      const int percentWidth = showBar ? renderer.getTextWidth(UI_10_FONT_ID, percentText) : 0;
+      const int barRowHeight = showBar ? std::max(barHeight, renderer.getLineHeight(UI_10_FONT_ID)) : 0;
+      const int barBlockHeight = showBar ? barGap + barRowHeight : 0;
+
+      // As many title lines as fit in the selection box beside the author and bar; the last one
+      // ends in an ellipsis when the title is longer. Measured in the bold it is drawn in.
+      const int boxInnerHeight = rect.height - hPaddingInSelection * 2;
+      const int maxTitleLines = std::clamp((boxInnerHeight - authorHeight - barBlockHeight) / titleLineHeight, 1, 3);
+      const auto lines =
+          renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, maxTitleLines, EpdFontFamily::BOLD);
       const auto truncatedAuthor =
           book.author.empty() ? std::string{} : renderer.truncatedText(UI_10_FONT_ID, book.author.c_str(), textWidth);
 
-      int totalTextHeight = renderer.getLineHeight(UI_12_FONT_ID) * static_cast<int>(lines.size());
-      if (!truncatedAuthor.empty()) totalTextHeight += renderer.getLineHeight(UI_10_FONT_ID) * 3 / 2;
+      const int totalTextHeight = titleLineHeight * static_cast<int>(lines.size()) + authorHeight + barBlockHeight;
       int textY = tileY + hPaddingInSelection + coverYOffset + (drawnCoverHeight - totalTextHeight) / 2;
 
       for (const auto& line : lines) {
         renderer.drawText(UI_12_FONT_ID, textX, textY, line.c_str(), true, EpdFontFamily::BOLD);
-        textY += renderer.getLineHeight(UI_12_FONT_ID);
+        textY += titleLineHeight;
       }
       if (!truncatedAuthor.empty()) {
         textY += renderer.getLineHeight(UI_10_FONT_ID) / 2;
         renderer.drawText(UI_10_FONT_ID, textX, textY, truncatedAuthor.c_str(), true);
+        textY += renderer.getLineHeight(UI_10_FONT_ID);
+      }
+      if (showBar) {
+        // Bar on the left, percentage right-aligned after it, both centred in one row.
+        const int rowY = textY + barGap;
+        const int barWidth = textWidth - percentWidth - barGap;
+        const int barY = rowY + (barRowHeight - barHeight) / 2;
+        renderer.drawText(UI_10_FONT_ID, textX + textWidth - percentWidth,
+                          rowY + (barRowHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2, percentText, true);
+        renderer.drawRect(textX, barY, barWidth, barHeight, true);
+        const int fillWidth = (barWidth - barInset * 2) * std::clamp(book.progressPercent, 0, 100) / 100;
+        if (fillWidth > 0) {
+          renderer.fillRect(textX + barInset, barY + barInset, fillWidth, barHeight - barInset * 2, true);
+        }
       }
     }
   } else {

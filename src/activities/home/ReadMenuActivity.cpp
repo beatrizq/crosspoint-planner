@@ -18,6 +18,7 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookProgress.h"
 #include "util/HomeAppOrder.h"
 #include "util/RecentBookLoader.h"
 
@@ -32,6 +33,10 @@ void ReadMenuActivity::onEnter() {
   swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   buildEntries();
   recentBooks = recentBookLoader::load(1);
+  // The card shows a progress bar in place of title and author when this is on.
+  if (SETTINGS.showHeroProgressBar && !recentBooks.empty()) {
+    recentBooks[0].progressPercent = loadBookProgress(recentBooks[0].path);
+  }
   selectedIndex = 0;
   headerFocused = false;
   bandStop = StatusBand::Stop::StatusBar;

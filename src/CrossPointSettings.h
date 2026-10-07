@@ -387,6 +387,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Focus Reading - emphasizes the first part of words with bold
   uint8_t focusReadingEnabled = 0;
   uint8_t readerMenuStyle = READER_MENU_LIST;
+  // Read menu hero card: show a progress bar in place of title and author (0 = off, 1 = on)
+  uint8_t showHeroProgressBar = 0;
   // Index into companion::COMPANION_SPRITES (0 = the first companion).
   // Persisted numerically, so sprites/order.txt is append-only.
   uint8_t companionId = 0;
