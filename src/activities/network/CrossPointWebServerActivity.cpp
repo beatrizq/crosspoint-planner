@@ -103,9 +103,6 @@ void CrossPointWebServerActivity::exitActivity() {
     case FileTransferReturn::ReadMenu:
       activityManager.goToReadMenu();
       break;
-    case FileTransferReturn::Settings:
-      activityManager.goToSettings();
-      break;
     case FileTransferReturn::Home:
       onGoHome();
       break;

@@ -128,7 +128,6 @@ void SettingsActivity::rebuildSettingsLists() {
     systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer));
   // Timezone, DST, 12/24h and the NTP sync. Offered on every board: without a hardware RTC the
   // device keeps time from the system clock, which the same screen's sync sets.
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLOCK, SettingAction::ClockSettings));
@@ -582,11 +581,6 @@ void SettingsActivity::toggleCurrentSetting() {
               rebuildSettingsLists();
               requestUpdate();
             });
-        break;
-      case SettingAction::FileTransfer:
-        // Replaces this screen rather than running as a sub-activity, like every
-        // other entry into File Transfer; it comes back to Settings on exit.
-        activityManager.goToFileTransfer(FileTransferReturn::Settings);
         break;
       case SettingAction::DownloadFonts:
         startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
