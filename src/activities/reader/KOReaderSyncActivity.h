@@ -26,6 +26,11 @@ class KOReaderSyncActivity final : public Activity, private UiAppHost {
                                 CrossPointPosition localPosition, SavedProgressPosition localKoPos,
                                 std::string localChapterName);
 
+  // Starts a sync for a book that is not open: loads its metadata, rebuilds the local position from
+  // progress.bin, and switches to this screen. False, with nothing changed, if KOReader credentials
+  // or the book's cache are missing.
+  static bool launchForBook(GfxRenderer& renderer, MappedInputManager& mappedInput, const std::string& epubPath);
+
   void onEnter() override;
   void onExit() override;
   void loop() override;

@@ -21,6 +21,7 @@ class FileBrowserActivity final : public UiListActivity {
   void renameSelectedFile(const std::string& oldPath, const std::string& oldEntry, const std::string& newStem,
                           const std::string& extension);
   void deleteSelected();
+  void syncSelectedBook();
   // Start folder (see CrossPointSettings::browseStartFolder): the highlighted folder's path without
   // a trailing slash, and whether it is the current start folder.
   std::string selectedFolderPath() const;

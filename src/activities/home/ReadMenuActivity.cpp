@@ -1,19 +1,29 @@
 #include "ReadMenuActivity.h"
 
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <Logging.h>
+#include <Memory.h>
 
 #include <algorithm>
 #include <string>
 
+#include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "activities/home/MainMenuActivity.h"
+#include "activities/reader/KOReaderSyncActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/HomeAppOrder.h"
 #include "util/RecentBookLoader.h"
+
+namespace {
+constexpr unsigned long KOSYNC_HOLD_MS = 1000;
+}  // namespace
 
 void ReadMenuActivity::onEnter() {
   Activity::onEnter();
@@ -86,6 +96,23 @@ void ReadMenuActivity::loop() {
     // bar (or anywhere else) it is Home, as always.
     if (headerFocused && band.handleRight1(bandStop)) return;
     onGoHome(HomeMenuItem::READ_MENU);
+    return;
+  }
+
+  // Holding Confirm on the card syncs that book's progress with KOReader without opening it.
+  // wasLongPressed() also swallows the release, so the book does not open as well.
+  if (!headerFocused && selectedIndex == 0 && !recentBooks.empty() &&
+      FsHelpers::hasEpubExtension(recentBooks[0].path) && KOREADER_STORE.hasCredentials() &&
+      mappedInput.wasLongPressed(MappedInputManager::Button::Right2, KOSYNC_HOLD_MS)) {
+    if (!KOReaderSyncActivity::launchForBook(renderer, mappedInput, recentBooks[0].path)) {
+      auto notice = makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_SYNC_PROGRESS),
+                                                            tr(STR_SYNC_OPEN_BOOK_FIRST));
+      if (!notice) {
+        LOG_ERR("ReadMenu", "OOM: sync notice");
+        return;
+      }
+      startActivityForResult(std::move(notice), [](const ActivityResult&) {});
+    }
     return;
   }
 

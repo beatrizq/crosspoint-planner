@@ -60,6 +60,68 @@ KOReaderSyncActivity::KOReaderSyncActivity(GfxRenderer& renderer, MappedInputMan
       remotePosition{},
       localProgress(std::move(localKoPos)) {}
 
+bool KOReaderSyncActivity::launchForBook(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                         const std::string& epubPath) {
+  if (!KOREADER_STORE.hasCredentials()) return false;
+
+  // shared_ptr because ProgressMapper takes one; released before the sync screen loads its own copy.
+  std::shared_ptr<Epub> epub(new (std::nothrow) Epub(epubPath, "/.crosspoint"));
+  if (!epub) {
+    LOG_ERR("KOSync", "OOM: epub for sync");
+    return false;
+  }
+  epub->setupCacheDir();
+  if (!epub->load(false, true)) {
+    LOG_ERR("KOSync", "No book cache to sync from: %s", epubPath.c_str());
+    return false;
+  }
+  const int spineCount = epub->getSpineItemsCount();
+  if (spineCount <= 0) return false;
+
+  CrossPointPosition pos{0, 0, 0};
+  HalFile file;
+  if (Storage.openFileForRead("KOSync", epub->getCachePath() + "/progress.bin", file)) {
+    uint8_t data[10];
+    const int size = file.read(data, sizeof(data));
+    if (size == 4 || size == 6 || size == 10) {
+      pos.spineIndex = data[0] | (data[1] << 8);
+      pos.pageNumber = data[2] | (data[3] << 8);
+      if (pos.pageNumber == UINT16_MAX) pos.pageNumber = 0;  // stale last-page sentinel
+      if (size >= 6) pos.totalPages = data[4] | (data[5] << 8);
+      if (size == 10) {
+        pos.visibleTextOffset = static_cast<uint32_t>(data[6]) | (static_cast<uint32_t>(data[7]) << 8) |
+                                (static_cast<uint32_t>(data[8]) << 16) | (static_cast<uint32_t>(data[9]) << 24);
+        pos.hasVisibleTextOffset = true;
+      }
+    }
+  }
+  if (pos.spineIndex >= spineCount) {
+    // A finished book is stored one past the last chapter.
+    pos.spineIndex = spineCount - 1;
+    pos.pageNumber = pos.totalPages > 0 ? pos.totalPages - 1 : 0;
+    pos.hasVisibleTextOffset = false;
+  }
+  pos.hasResolvedSpineIndex = true;
+  pos.hasMappedPage = true;
+
+  const int tocIdx = epub->getTocIndexForSpineIndex(pos.spineIndex);
+  std::string chapterName = tocIdx >= 0 ? epub->getTocItem(tocIdx).title : "";
+
+  SavedProgressPosition koPos;
+  {
+    // The mapper borrows the framebuffer; nothing may render meanwhile.
+    RenderLock renderLock;
+    GfxRenderer::FrameBufferLoan loan(renderer);
+    koPos = ProgressMapper::toSavedProgress(epub, pos);
+  }
+  epub.reset();
+
+  LOG_DBG("KOSync", "Syncing unopened book (heap: %u)", static_cast<unsigned>(ESP.getFreeHeap()));
+  activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(renderer, mappedInput, epubPath, pos,
+                                                                         std::move(koPos), std::move(chapterName)));
+  return true;
+}
+
 void KOReaderSyncActivity::ensureEpubLoaded() {
   if (!epub) {
     LOG_DBG("KOSync", "Loading epub for progress mapping (heap: %u)", (unsigned)ESP.getFreeHeap());

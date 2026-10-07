@@ -13,8 +13,10 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
+#include "activities/reader/KOReaderSyncActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
@@ -390,9 +392,14 @@ void FileBrowserActivity::showEntryActions() {
   static constexpr StrId DIRECTORY_OPTIONS[] = {StrId::STR_OPEN, StrId::STR_DELETE, StrId::STR_SET_START_FOLDER};
   static constexpr StrId START_DIRECTORY_OPTIONS[] = {StrId::STR_OPEN, StrId::STR_DELETE,
                                                       StrId::STR_CLEAR_START_FOLDER};
-  const StrId* options = FILE_OPTIONS;
+  static constexpr StrId SYNC_FILE_OPTIONS[] = {StrId::STR_OPEN, StrId::STR_DELETE, StrId::STR_RENAME,
+                                                StrId::STR_SYNC_PROGRESS};
+  const bool canSync =
+      !isDirectory && FsHelpers::hasEpubExtension(files[nav.selected]) && KOREADER_STORE.hasCredentials();
+  const StrId* options = canSync ? SYNC_FILE_OPTIONS : FILE_OPTIONS;
+  int optionCount = canSync ? 4 : 3;
   if (isDirectory) options = isStartFolder(selectedFolderPath()) ? START_DIRECTORY_OPTIONS : DIRECTORY_OPTIONS;
-  optionPopup.show(StrId::STR_FILENAME, options, 3, 0, [this, isDirectory](const int index) {
+  optionPopup.show(StrId::STR_FILENAME, options, optionCount, 0, [this, isDirectory](const int index) {
     if (index == 0) {
       activateSelected();
     } else if (index == 1) {
@@ -403,6 +410,8 @@ void FileBrowserActivity::showEntryActions() {
       } else {
         startRename();
       }
+    } else if (index == 3) {
+      syncSelectedBook();
     }
   });
   requestUpdate();
@@ -434,6 +443,24 @@ void FileBrowserActivity::toggleStartFolder() {
   SETTINGS.saveToFile();
   LOG_DBG("FileBrowser", "Start folder: %s", SETTINGS.browseStartFolder[0] ? SETTINGS.browseStartFolder : "(root)");
   requestUpdate();
+}
+
+void FileBrowserActivity::syncSelectedBook() {
+  if (files.empty() || nav.selected < 0 || nav.selected >= listCount()) return;
+
+  std::string cleanBasePath = basepath;
+  if (cleanBasePath.back() != '/') cleanBasePath += "/";
+  const std::string fullPath = cleanBasePath + files[nav.selected];
+  if (KOReaderSyncActivity::launchForBook(renderer, mappedInput, fullPath)) return;
+
+  // Nothing to sync from yet: the book has never been opened, so it has no cache.
+  auto notice = makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_SYNC_PROGRESS),
+                                                        tr(STR_SYNC_OPEN_BOOK_FIRST));
+  if (!notice) {
+    LOG_ERR("FileBrowser", "OOM: sync notice");
+    return;
+  }
+  startActivityForResult(std::move(notice), [](const ActivityResult&) {});
 }
 
 void FileBrowserActivity::deleteSelected() {
