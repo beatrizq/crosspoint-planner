@@ -1,10 +1,13 @@
 #include "ReadMenuActivity.h"
 
+#include <Epub.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
 #include <Memory.h>
+#include <Xtc.h>
 
 #include <algorithm>
 #include <string>
@@ -24,6 +27,42 @@
 
 namespace {
 constexpr unsigned long KOSYNC_HOLD_MS = 1000;
+
+// The card draws the book's cached thumbnail; nothing else creates it now that the Home grid is gone,
+// so a book without one (opened for the first time, or received over File Transfer) gets it here.
+// A book with no usable cover has its stored cover path cleared so this is not retried every visit.
+void ensureHeroCover(GfxRenderer& renderer, RecentBook& book) {
+  if (book.coverBmpPath.empty()) return;
+  const int height = UITheme::getInstance().getMetrics().homeCoverHeight;
+  if (Storage.exists(UITheme::getCoverThumbPath(book.coverBmpPath, height).c_str())) return;
+
+  bool generated = false;
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    auto epub = makeUniqueNoThrow<Epub>(book.path, "/.crosspoint");
+    if (!epub) {
+      LOG_ERR("ReadMenu", "OOM: cover epub");
+      return;
+    }
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    generated = epub->generateThumbBmpFromSource(height);
+  } else if (FsHelpers::hasXtcExtension(book.path)) {
+    auto xtc = makeUniqueNoThrow<Xtc>(book.path, "/.crosspoint");
+    if (!xtc) {
+      LOG_ERR("ReadMenu", "OOM: cover xtc");
+      return;
+    }
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    generated = xtc->load() && xtc->generateThumbBmp(height);
+  } else {
+    return;
+  }
+
+  if (!generated) {
+    LOG_ERR("ReadMenu", "No cover for %s", book.path.c_str());
+    RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+    book.coverBmpPath.clear();
+  }
+}
 }  // namespace
 
 void ReadMenuActivity::onEnter() {
@@ -33,7 +72,8 @@ void ReadMenuActivity::onEnter() {
   swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   buildEntries();
   recentBooks = recentBookLoader::load(1);
-  // The card shows a progress bar in place of title and author when this is on.
+  if (!recentBooks.empty()) ensureHeroCover(renderer, recentBooks[0]);
+  // The card shows a progress bar under the author when this is on.
   if (SETTINGS.showHeroProgressBar && !recentBooks.empty()) {
     recentBooks[0].progressPercent = loadBookProgress(recentBooks[0].path);
   }
