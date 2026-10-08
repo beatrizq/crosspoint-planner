@@ -34,7 +34,19 @@ constexpr unsigned long KOSYNC_HOLD_MS = 1000;
 void ensureHeroCover(GfxRenderer& renderer, RecentBook& book) {
   if (book.coverBmpPath.empty()) return;
   const int height = UITheme::getInstance().getMetrics().homeCoverHeight;
-  if (Storage.exists(UITheme::getCoverThumbPath(book.coverBmpPath, height).c_str())) return;
+  const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, height);
+  if (Storage.exists(thumbPath.c_str())) {
+    bool hasContent = false;
+    {
+      HalFile existing;
+      hasContent = Storage.openFileForRead("ReadMenu", thumbPath, existing) && existing.size() > 0;
+    }
+    if (hasContent) return;
+    // An empty file is the "no cover" marker an earlier failed attempt leaves (Epub::generateThumbBmpForCover),
+    // and the generator would take it for a finished thumbnail. Clear it and try once more.
+    LOG_DBG("ReadMenu", "Empty thumbnail for %s; regenerating", book.path.c_str());
+    Storage.remove(thumbPath.c_str());
+  }
 
   bool generated = false;
   if (FsHelpers::hasEpubExtension(book.path)) {
