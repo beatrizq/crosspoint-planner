@@ -29,6 +29,12 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // reactively at sleep time, so main.cpp's own isQuickPickActivity() check
   // stamps this here instead.
   bool lastSleepFromQuickPick = false;
+  // Whether the last sleep was a Quick Resume, and the top-level screen (ResumeScreen) and its
+  // argument it was on; a Quick Resume wake reopens that screen, any other wake opens
+  // SETTINGS.wakeScreen.
+  bool lastSleepQuickResume = false;
+  uint8_t lastSleepScreen = 0;
+  std::string lastSleepScreenArg;
 
   // A running focus session, mirrored on start (plannerActions::beginFocusSession)
   // and cleared once consumed (FocusSessionActivity, once the countdown

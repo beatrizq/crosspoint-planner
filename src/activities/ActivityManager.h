@@ -13,6 +13,7 @@
 
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "ResumeScreen.h"
 #include "activities/network/FileTransferReturn.h"
 #include "util/HomeAppOrder.h"
 #include "util/ScreenshotInfo.h"
@@ -164,6 +165,9 @@ class ActivityManager {
   bool requiresExclusiveStorageLoop() const;
   bool isReaderActivity() const;
   bool isQuickPickActivity() const;
+  // The screen at the bottom of the stack (what a Quick Resume wake reopens) and its argument.
+  ResumeScreen rootResumeScreen(std::string& arg) const;
+  void goToResumeScreen(ResumeScreen screen, const std::string& arg);
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

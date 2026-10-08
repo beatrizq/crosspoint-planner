@@ -60,6 +60,7 @@ class TasksActivity final : public PlannerScreenActivity {
                          std::string selectTaskId = "")
       : PlannerScreenActivity("Tasks", renderer, mappedInput, initialTab), selectTaskId(std::move(selectTaskId)) {}
 
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Tasks; }
   void onEnter() override;
 
  protected:

@@ -35,6 +35,7 @@ class CalendarActivity final : public PlannerScreenActivity {
  protected:
   const char* screenTitle() const override;
   homeAppOrder::AppId appId() const override { return homeAppOrder::AppId::Calendar; }
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Calendar; }
   int tabCount() const override { return TAB_COUNT; }
   const char* tabLabel(int index) const override;
   void formatStatus(char* out, size_t outSize) const override;

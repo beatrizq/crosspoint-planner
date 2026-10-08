@@ -305,6 +305,10 @@ void enterDeepSleep(bool fromTimeout = false, bool forceQuickResume = false) {
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME || forceQuickResume ||
       (fromTimeout &&
        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT);
+  APP_STATE.lastSleepQuickResume = isQuickResumeSleep;
+  std::string resumeArg;
+  APP_STATE.lastSleepScreen = static_cast<uint8_t>(activityManager.rootResumeScreen(resumeArg));
+  APP_STATE.lastSleepScreenArg = std::move(resumeArg);
   // Every sleep mode leaves a complete retained frame on the e-ink panel. Keep
   // it visible until the first useful reader or home paint replaces it.
   APP_STATE.showBootScreen = false;
@@ -648,23 +652,27 @@ void setup() {
         renderer, mappedInputManager, static_cast<companion::Mood>(APP_STATE.companionSessionMood),
         APP_STATE.companionSessionEndAbsMinutes, APP_STATE.companionSessionEndHour,
         APP_STATE.companionSessionEndMinute));
-  } else if (APP_STATE.lastSleepFromQuickPick && !mappedInputManager.isPressed(MappedInputManager::Button::Right1)) {
-    // Same escape hatch as the reader branch below: holding Back on wake skips
-    // straight to home instead of reopening the companion screen.
-    activityManager.replaceActivity(std::make_unique<QuickPickActivity>(renderer, mappedInputManager));
-  } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
-             mappedInputManager.isPressed(MappedInputManager::Button::Right1) ||
-             APP_STATE.readerActivityLoadCount > 0) {
-    // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
-    // crashed (indicated by readerActivityLoadCount > 0)
+  } else if (mappedInputManager.isPressed(MappedInputManager::Button::Right1)) {
+    // Holding Back on wake always lands on Home, whatever the wake screen setting says.
     activityManager.goHome(HomeMenuItem::NONE, needsWakeRefresh);
-  } else {
-    // Clear app state to avoid getting into a boot loop if the epub doesn't load
+  } else if (APP_STATE.lastSleepQuickResume && APP_STATE.lastSleepFromReader && !APP_STATE.openEpubPath.empty() &&
+             APP_STATE.readerActivityLoadCount == 0) {
+    // Quick Resume from a book: straight back to the page. Clear the path first so an epub that
+    // fails to load cannot loop the next boot.
     const auto path = APP_STATE.openEpubPath;
     APP_STATE.openEpubPath = "";
     APP_STATE.readerActivityLoadCount++;
     APP_STATE.saveToFile();
     activityManager.goToReader(path, allowFastInitialReaderRefresh);
+  } else if (APP_STATE.lastSleepQuickResume && APP_STATE.lastSleepScreen != 0) {
+    activityManager.goToResumeScreen(static_cast<ResumeScreen>(APP_STATE.lastSleepScreen),
+                                     APP_STATE.lastSleepScreenArg);
+  } else if (SETTINGS.wakeScreen == CrossPointSettings::WAKE_READER) {
+    activityManager.goToReadMenu();
+  } else if (SETTINGS.wakeScreen == CrossPointSettings::WAKE_PLANNER) {
+    activityManager.goToCompanion();
+  } else {
+    activityManager.goHome(HomeMenuItem::NONE, needsWakeRefresh);
   }
 
   if (resume == BootResume::Silent) {

@@ -256,6 +256,9 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // "tapForReaderMenu" key: 0/1 keep their old Off/Tap meaning.
   enum SHOW_READER_MENU { READER_MENU_OFF = 0, READER_MENU_TAP = 1, READER_MENU_SWIPE_UP = 2, SHOW_READER_MENU_COUNT };
 
+  // The screen a wake from sleep (or a fresh boot) opens: Home, the Read menu, or the Planner (companion) screen.
+  enum WAKE_SCREEN { WAKE_HOME = 0, WAKE_READER = 1, WAKE_PLANNER = 2, WAKE_SCREEN_COUNT };
+
   enum QUICK_RESUME_SLEEP_SCREEN {
     QUICK_RESUME_NEVER = 0,
     QUICK_RESUME_AFTER_TIMEOUT = 1,
@@ -263,6 +266,7 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   // Sleep screen settings
+  uint8_t wakeScreen = WAKE_HOME;
   uint8_t sleepScreen = DARK;
   // Night mode: inverted output polarity, applied to every activity per
   // render by ActivityManager. The sleep screen opts out itself.

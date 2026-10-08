@@ -90,6 +90,10 @@ class FileBrowserActivity final : public UiListActivity {
  public:
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
                                Mode mode = Mode::Books, bool returnToReadMenu = false);
+  ResumeScreen resumeScreen() const override {
+    return mode == Mode::Books ? ResumeScreen::FileBrowser : ResumeScreen::None;
+  }
+  std::string resumeArg() const override { return basepath; }
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&& lock) override;

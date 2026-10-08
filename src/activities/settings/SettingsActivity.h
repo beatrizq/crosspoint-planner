@@ -243,6 +243,7 @@ class SettingsActivity final : public Activity {
       tabBuckets = {SettingsBucket::System, SettingsBucket::Display, SettingsBucket::Reader, SettingsBucket::Planner};
     }
   }
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Settings; }
   void onEnter() override;
   void onExit() override;
   void loop() override;

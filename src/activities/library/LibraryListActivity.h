@@ -35,6 +35,7 @@ class LibraryListActivity final : public UiTabListActivity {
   // only by ActivityManager::goToLibrary() on behalf of ReadMenuActivity.
   LibraryListActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, bool returnToReadMenu = false);
 
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Library; }
   void onEnter() override;
   void onExit() override;
 

@@ -152,6 +152,7 @@ class QuickPickActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool isQuickPickActivity() const override { return true; }
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Planner; }
 
  private:
   // Tasks tab row action -- mirrors TasksActivity's own showRowOptions() and

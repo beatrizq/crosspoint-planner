@@ -448,6 +448,43 @@ bool ActivityManager::isQuickPickActivity() const {
          (currentActivity && currentActivity->isQuickPickActivity());
 }
 
+ResumeScreen ActivityManager::rootResumeScreen(std::string& arg) const {
+  const Activity* root = stackActivities.empty() ? currentActivity.get() : stackActivities.front().get();
+  if (!root) return ResumeScreen::None;
+  arg = root->resumeArg();
+  return root->resumeScreen();
+}
+
+void ActivityManager::goToResumeScreen(const ResumeScreen screen, const std::string& arg) {
+  switch (screen) {
+    case ResumeScreen::ReadMenu:
+      goToReadMenu();
+      return;
+    case ResumeScreen::Planner:
+      goToCompanion();
+      return;
+    case ResumeScreen::Tasks:
+      goToTasks();
+      return;
+    case ResumeScreen::Calendar:
+      goToCalendar();
+      return;
+    case ResumeScreen::Settings:
+      goToSettings();
+      return;
+    case ResumeScreen::FileBrowser:
+      goToFileBrowser(arg);
+      return;
+    case ResumeScreen::Library:
+      goToLibrary();
+      return;
+    case ResumeScreen::Home:
+    case ResumeScreen::None:
+      goHome();
+      return;
+  }
+}
+
 bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }

@@ -11,6 +11,7 @@
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
 #include "RenderLock.h"
+#include "ResumeScreen.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity {
@@ -53,6 +54,10 @@ class Activity {
   // For the sleep-wake resume flag: whether this is the companion's
   // quick-pick reveal screen, mirroring isReaderActivity() above.
   virtual bool isQuickPickActivity() const { return false; }
+  // The screen a Quick Resume wake should reopen when this is the bottom of the stack at sleep
+  // time, and the argument (e.g. a folder) it needs; None for screens that cannot be rebuilt.
+  virtual ResumeScreen resumeScreen() const { return ResumeScreen::None; }
+  virtual std::string resumeArg() const { return {}; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
