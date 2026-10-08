@@ -453,6 +453,7 @@ void SettingsActivity::toggleCurrentSetting() {
   const auto& setting = (*currentSettings)[selectedSetting];
   const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
   const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
+  const bool bleChanged = setting.valuePtr == &CrossPointSettings::bleEnabled;
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     openSleepTimeoutPicker();
@@ -660,6 +661,8 @@ void SettingsActivity::toggleCurrentSetting() {
   syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
   SETTINGS.saveToFile();
   rebuildSettingsLists();
+  // Turning it off frees the stack's heap now; turning it on starts it at the next boot.
+  if (bleChanged && !SETTINGS.bleEnabled) BleNotifyRelay::pause();
   if (setting.valuePtr == &CrossPointSettings::uiTheme) UITheme::getInstance().reload();
   selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
 }

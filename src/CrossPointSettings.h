@@ -267,6 +267,8 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
 
   // Sleep screen settings
   uint8_t wakeScreen = WAKE_HOME;
+  // Bluetooth alert relay (the CrossPoint Notify app): 0 = never started, so its ~55KB stays free. Read at boot.
+  uint8_t bleEnabled = 1;
   uint8_t sleepScreen = DARK;
   // Night mode: inverted output polarity, applied to every activity per
   // render by ActivityManager. The sleep screen opts out itself.

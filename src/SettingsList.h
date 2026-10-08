@@ -242,6 +242,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_PLANNER_FONT_SIZE, &CrossPointSettings::plannerFontSize,
                           {StrId::STR_SIZE_SMALL, StrId::STR_SIZE_LARGE}, "plannerFontSize", StrId::STR_CAT_PLANNER),
+        SettingInfo::Toggle(StrId::STR_BLE_ALERTS, &CrossPointSettings::bleEnabled, "bleEnabled",
+                            StrId::STR_CAT_PLANNER),
         SettingInfo::Enum(StrId::STR_HIDE_BATTERY, &CrossPointSettings::hideBatteryPercentage,
                           {StrId::STR_NEVER, StrId::STR_IN_READER, StrId::STR_ALWAYS}, "hideBatteryPercentage",
                           StrId::STR_CAT_DISPLAY),

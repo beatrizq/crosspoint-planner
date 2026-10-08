@@ -242,6 +242,9 @@ void QuickPickActivity::onEnter() {
   // project (or the generic Tasks group), never Logs, which is last.
   focus = Focus::Projects;
   band.setIncludeSyncHint(true);
+  // The only screen that carries today's events and the newest alert (see StatusBand).
+  band.setShowCalendar(true);
+  band.setShowAlert(SETTINGS.bleEnabled != 0);
   band.poll();
   enteredAtMs = millis();
   requestUpdate(true);

@@ -699,7 +699,7 @@ void setup() {
   // point is a clean heap for WiFi and TLS, and NimBLE would take ~55KB of it straight
   // back. Sync All always restarts once it is done (SyncAllActivity::onExit()), and BLE
   // comes up at that boot.
-  if (!(resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SYNC)) {
+  if (SETTINGS.bleEnabled && !(resume == BootResume::Silent && snapshotTarget == SILENT_REBOOT_TARGET_SYNC)) {
     BleNotifyRelay::begin();
   }
 }
