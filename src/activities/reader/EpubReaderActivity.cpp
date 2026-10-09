@@ -543,27 +543,8 @@ void EpubReaderActivity::loop() {
   const bool confirmLongPressed = !endOfBookMenuOpen && confirmHoldMs != 0 &&
                                   mappedInput.wasLongPressed(MappedInputManager::Button::Right2, confirmHoldMs);
   const bool confirmReleased = mappedInput.wasReleased(MappedInputManager::Button::Right2);
-  if (confirmLongPressed) {
-    switch (SETTINGS.longPressMenuFunction) {
-      case CrossPointSettings::LP_MENU_BOOKMARK:
-        addBookmark();
-        showBookmarkMessage = true;
-        bookmarkMessageTime = millis();
-        requestUpdate();
-        break;
-      case CrossPointSettings::LP_MENU_KOSYNC:
-        if (launchKOReaderSync()) {
-          return;
-        }
-        break;
-      case CrossPointSettings::LP_MENU_DICTIONARY:
-        openDictionaryWordSelect();
-        return;
-      case CrossPointSettings::LP_MENU_READER_MENU:
-      case CrossPointSettings::LP_MENU_DISABLED:
-      default:
-        break;
-    }
+  if (confirmLongPressed && launchKOReaderSync()) {
+    return;
   }
 
   if (!endOfBookMenuOpen) {
@@ -947,17 +928,8 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
 }
 
 unsigned long EpubReaderActivity::confirmLongPressThreshold() const {
-  switch (SETTINGS.longPressMenuFunction) {
-    case CrossPointSettings::LP_MENU_BOOKMARK:
-    case CrossPointSettings::LP_MENU_DICTIONARY:
-      return ReaderUtils::BOOKMARK_HOLD_MS;
-    case CrossPointSettings::LP_MENU_KOSYNC:
-      return KOREADER_STORE.hasCredentials() ? ReaderUtils::GO_HOME_MS : 0;
-    case CrossPointSettings::LP_MENU_READER_MENU:
-    case CrossPointSettings::LP_MENU_DISABLED:
-    default:
-      return 0;
-  }
+  // Holding Confirm is KOReader sync, so it only needs detecting when sync is set up.
+  return KOREADER_STORE.hasCredentials() ? ReaderUtils::GO_HOME_MS : 0;
 }
 
 bool EpubReaderActivity::launchKOReaderSync() {

@@ -93,7 +93,8 @@ void SettingsActivity::rebuildSettingsLists() {
       if (setting.inTextSettings) continue;
       readerSettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_CONTROLS) {
-      if (BoardConfig::hasHomeKey() && setting.valuePtr == &CrossPointSettings::longPressMenuFunction) continue;
+      // Holding Confirm is KOReader sync in the reader now, so this choice no longer exists on-device.
+      if (setting.valuePtr == &CrossPointSettings::longPressMenuFunction) continue;
       if (setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
           SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
         continue;
