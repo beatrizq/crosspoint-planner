@@ -255,15 +255,15 @@ void QuickPickActivity::onEnter() {
 void QuickPickActivity::rebuildEmbeddedTabs() {
   if (onLogsEntry()) {
     // Logs is a list with no tabs of its own (the tab bar is hidden for it).
-    visibleTabs.assign(1, taskTabModel::TaskTabKind::LOGS);
-    activeKind = taskTabModel::TaskTabKind::LOGS;
+    visibleTabs.assign(1, taskTabModel::TaskTab::logs());
+    activeKind = taskTabModel::TaskTab::logs();
   } else {
-    if (activeKind == taskTabModel::TaskTabKind::LOGS) activeKind = taskTabModel::TaskTabKind::OVERDUE;
+    if (activeKind.isLogs()) activeKind = taskTabModel::TaskTab{};
     const int restored = taskTabModel::rebuildVisibleTabs(activeKind, visibleTabs, currentScope(),
                                                           /*includeLogs=*/false);
     // A project with nothing under any tab (every task completed) still shows
     // one, empty, rather than a tab bar with no tabs.
-    if (visibleTabs.empty()) visibleTabs.push_back(taskTabModel::TaskTabKind::TODAY);
+    if (visibleTabs.empty()) visibleTabs.push_back(taskTabModel::TaskTab::unlabelled());
     activeKind = visibleTabs[static_cast<size_t>(restored) < visibleTabs.size() ? static_cast<size_t>(restored) : 0];
   }
 
@@ -486,7 +486,7 @@ void QuickPickActivity::offerFocusSessionForTask(const std::string& taskId) {
 
 int QuickPickActivity::embeddedRowCount() const { return taskTabModel::countFor(activeKind, currentScope()); }
 
-bool QuickPickActivity::embeddedOnLogs() const { return activeKind == taskTabModel::TaskTabKind::LOGS; }
+bool QuickPickActivity::embeddedOnLogs() const { return activeKind.isLogs(); }
 
 uint32_t QuickPickActivity::currentScope() const {
   return projectIndex < projectEntries.size() ? projectEntries[projectIndex].scope : taskTabModel::ALL_PROJECTS;
@@ -540,7 +540,7 @@ void QuickPickActivity::selectProject(const size_t index) {
   // happened to be -- always a valid, visible place to be (see tabBarFocused's
   // own comment) -- except on Logs, which has no tab bar.
   taskSelectedRow = 0;
-  activeKind = taskTabModel::TaskTabKind::OVERDUE;
+  activeKind = taskTabModel::TaskTab{};
   rebuildEmbeddedTabs();
   tabBarFocused = !onLogsEntry();
 }
@@ -592,7 +592,7 @@ void QuickPickActivity::switchTab(const int delta) {
 }
 
 void QuickPickActivity::clearSelectedLogTaskRow() {
-  if (activeKind != taskTabModel::TaskTabKind::LOGS) return;
+  if (!activeKind.isLogs()) return;
   const int entryIndex = taskTabModel::logEntryIndexForRow(taskSelectedRow);
   if (entryIndex < 0) return;
   const auto& entries = TODOIST_TASKS.getCompletedTodayEntries();
@@ -890,7 +890,7 @@ void QuickPickActivity::loop() {
           switchTab(1);
           break;
         }
-        if (activeKind == taskTabModel::TaskTabKind::LOGS) {
+        if (activeKind.isLogs()) {
           clearSelectedLogTaskRow();
         } else {
           const int cacheIndex = taskTabModel::taskCacheIndexForRow(activeKind, taskSelectedRow, currentScope());
@@ -915,26 +915,26 @@ void QuickPickActivity::renderTasksTab(const int top, const int height) const {
 
   const int totalRows = taskTabModel::countFor(activeKind, currentScope());
   if (totalRows == 0) {
-    const char* empty = activeKind == taskTabModel::TaskTabKind::LOGS ? tr(STR_LOG_EMPTY) : tr(STR_TODOIST_NO_TASKS);
+    const char* empty = activeKind.isLogs() ? tr(STR_LOG_EMPTY) : tr(STR_TODOIST_NO_TASKS);
     renderer.drawCenteredText(UI_10_FONT_ID, top + height / 2, empty);
     return;
   }
 
   // Title, plus a dimmed second line where a row has something to say there: its
-  // label and, on Upcoming, its due date (Logs' rows always carry the Cached/
-  // Synced tag). A row with neither is a single, thinner line -- so rows are not
-  // all the same height, and pages are packed by height rather than by count.
+  // due date (Logs' rows always carry the Cached/Synced tag). A row with neither is a single, thinner line -- so rows
+  // are not all the same height, and pages are packed by height rather than by count.
   const int titleFont = taskRowTitleFontId();
   const int subtitleFont = taskRowSubtitleFontId();
   const int rowPad = std::max(6, renderer.getLineHeight(titleFont) * 2 / 5);
   const int oneLineHeight = renderer.getLineHeight(titleFont) + rowPad;
   const int twoLineHeight = oneLineHeight + renderer.getLineHeight(subtitleFont);
-  const bool onLogs = activeKind == taskTabModel::TaskTabKind::LOGS;
-  const bool showsDates = taskTabModel::rowsHaveSubtitle(activeKind) && !onLogs;
+  const bool onLogs = activeKind.isLogs();
 
-  // Which rows are two lines, one bit per row (at most TODOIST_MAX_CACHED_TASKS
-  // rows on any tab), found in one pass over the tasks rather than a per-row
-  // lookup -- 15 bytes of stack, no allocation.
+  // The tab's tasks in display order, found once for the whole frame, and which of
+  // those rows are two lines (the dated ones), one bit per row. At most
+  // TODOIST_MAX_CACHED_TASKS rows on any tab -- 60 + 8 bytes of stack, no allocation.
+  uint8_t rowCache[TODOIST_MAX_CACHED_TASKS];
+  if (!onLogs) taskTabModel::rowsFor(activeKind, currentScope(), rowCache);
   uint32_t twoLineBits[(TODOIST_MAX_CACHED_TASKS + 31) / 32] = {};
   const auto setTwoLine = [&twoLineBits](const int r) { twoLineBits[r / 32] |= 1u << (r % 32); };
   const auto isTwoLine = [&twoLineBits](const int r) { return (twoLineBits[r / 32] >> (r % 32) & 1u) != 0; };
@@ -942,11 +942,8 @@ void QuickPickActivity::renderTasksTab(const int top, const int height) const {
     for (int r = 0; r < totalRows && r < static_cast<int>(TODOIST_MAX_CACHED_TASKS); r++) setTwoLine(r);
   } else {
     const auto& tasks = TODOIST_TASKS.getTasks();
-    int r = 0;
-    for (size_t t = 0; t < tasks.size() && r < static_cast<int>(TODOIST_MAX_CACHED_TASKS); t++) {
-      if (!taskTabModel::matchesKind(activeKind, t, currentScope())) continue;
-      if (!tasks[t].labels.empty() || (showsDates && tasks[t].dueDays != todoist::DUE_NONE)) setTwoLine(r);
-      r++;
+    for (int r = 0; r < totalRows && r < static_cast<int>(TODOIST_MAX_CACHED_TASKS); r++) {
+      if (tasks[rowCache[r]].dueDays != todoist::DUE_NONE) setTwoLine(r);
     }
   }
   const auto heightOf = [&](const int r) { return isTwoLine(r) ? twoLineHeight : oneLineHeight; };
@@ -1000,29 +997,18 @@ void QuickPickActivity::renderTasksTab(const int top, const int height) const {
       renderer.drawText(subtitleFont, textX, subY, tag, ink);
       dimText(renderer, textX, subY, subtitleFont, tag, ink);
     } else {
-      const int cacheIndex = taskTabModel::taskCacheIndexForRow(activeKind, i, currentScope());
-      if (cacheIndex < 0) {
+      if (i >= static_cast<int>(TODOIST_MAX_CACHED_TASKS) || i >= totalRows) {
         rowY += rowHeight;
         continue;
       }
-      const auto& task = TODOIST_TASKS.getTasks()[static_cast<size_t>(cacheIndex)];
+      const auto& task = TODOIST_TASKS.getTasks()[rowCache[i]];
       const auto shown = renderer.truncatedText(titleFont, task.content.c_str(), textWidth);
       renderer.drawText(titleFont, textX, textY, shown.c_str(), ink);
-      // The due date (only on tabs that show it) and the label, joined with a
-      // middle dot when both are there. A row with neither is one line and draws
-      // no subtitle at all.
+      // Only the due date: "Overdue", "Today" or the date. An undated task is one
+      // line and draws no subtitle at all.
       if (isTwoLine(i)) {
-        const bool showDate = showsDates && task.dueDays != todoist::DUE_NONE;
-        char when[16] = "";
-        if (showDate) planner::formatDayLabel(task.dueDays, when, sizeof(when));
-        char subtitle[TodoistTask::LABELS_MAX_LEN + 32];
-        if (showDate && !task.labels.empty()) {
-          snprintf(subtitle, sizeof(subtitle), "%s  \xC2\xB7  %s", when, task.labels.c_str());
-        } else if (showDate) {
-          snprintf(subtitle, sizeof(subtitle), "%s", when);
-        } else {
-          snprintf(subtitle, sizeof(subtitle), "%s", task.labels.c_str());
-        }
+        char subtitle[16];
+        taskTabModel::dueLabel(task, subtitle, sizeof(subtitle));
         const auto shownSubtitle = renderer.truncatedText(subtitleFont, subtitle, textWidth);
         const int subtitleY = textY + renderer.getLineHeight(titleFont);
         renderer.drawText(subtitleFont, textX, subtitleY, shownSubtitle.c_str(), ink);
@@ -1219,7 +1205,7 @@ void QuickPickActivity::render(RenderLock&&) {
   // bar" convention, the same one loop() mirrors for Left1/Left2/Right2).
   std::vector<TabInfo> tabs;
   tabs.reserve(visibleTabs.size());
-  for (const auto kind : visibleTabs) {
+  for (const auto& kind : visibleTabs) {
     tabs.push_back(TabInfo{taskTabModel::tabLabel(kind), kind == activeKind});
   }
   const bool showTabBar = !onLogsEntry();
@@ -1292,7 +1278,7 @@ void QuickPickActivity::render(RenderLock&&) {
         // A row is focused: Right1 goes Back up to the tab bar (see loop()'s
         // own Right1 handler); Right2 is whatever the row offers.
         backLabel = tr(STR_BACK);
-        if (activeKind == taskTabModel::TaskTabKind::LOGS) {
+        if (activeKind.isLogs()) {
           const int entryIndex = taskTabModel::logEntryIndexForRow(taskSelectedRow);
           const auto& entries = TODOIST_TASKS.getCompletedTodayEntries();
           const bool onCachedRow = entryIndex >= 0 && static_cast<size_t>(entryIndex) < entries.size() &&
