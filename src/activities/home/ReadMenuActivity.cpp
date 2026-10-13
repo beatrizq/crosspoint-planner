@@ -1,19 +1,81 @@
 #include "ReadMenuActivity.h"
 
+#include <Epub.h>
+#include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
+#include <Memory.h>
+#include <Xtc.h>
 
 #include <algorithm>
 #include <string>
 
+#include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "activities/home/MainMenuActivity.h"
+#include "activities/reader/KOReaderSyncActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "util/BookProgress.h"
 #include "util/HomeAppOrder.h"
 #include "util/RecentBookLoader.h"
+
+namespace {
+constexpr unsigned long KOSYNC_HOLD_MS = 1000;
+
+// The card draws the book's cached thumbnail; nothing else creates it now that the Home grid is gone,
+// so a book without one (opened for the first time, or received over File Transfer) gets it here.
+// A book with no usable cover has its stored cover path cleared so this is not retried every visit.
+void ensureHeroCover(GfxRenderer& renderer, RecentBook& book) {
+  if (book.coverBmpPath.empty()) return;
+  const int height = UITheme::getInstance().getMetrics().homeCoverHeight;
+  const std::string thumbPath = UITheme::getCoverThumbPath(book.coverBmpPath, height);
+  if (Storage.exists(thumbPath.c_str())) {
+    bool hasContent = false;
+    {
+      HalFile existing;
+      hasContent = Storage.openFileForRead("ReadMenu", thumbPath, existing) && existing.size() > 0;
+    }
+    if (hasContent) return;
+    // An empty file is the "no cover" marker an earlier failed attempt leaves (Epub::generateThumbBmpForCover),
+    // and the generator would take it for a finished thumbnail. Clear it and try once more.
+    LOG_DBG("ReadMenu", "Empty thumbnail for %s; regenerating", book.path.c_str());
+    Storage.remove(thumbPath.c_str());
+  }
+
+  bool generated = false;
+  if (FsHelpers::hasEpubExtension(book.path)) {
+    auto epub = makeUniqueNoThrow<Epub>(book.path, "/.crosspoint");
+    if (!epub) {
+      LOG_ERR("ReadMenu", "OOM: cover epub");
+      return;
+    }
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    generated = epub->generateThumbBmpFromSource(height);
+  } else if (FsHelpers::hasXtcExtension(book.path)) {
+    auto xtc = makeUniqueNoThrow<Xtc>(book.path, "/.crosspoint");
+    if (!xtc) {
+      LOG_ERR("ReadMenu", "OOM: cover xtc");
+      return;
+    }
+    GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
+    generated = xtc->load() && xtc->generateThumbBmp(height);
+  } else {
+    return;
+  }
+
+  if (!generated) {
+    LOG_ERR("ReadMenu", "No cover for %s", book.path.c_str());
+    RECENT_BOOKS.updateBook(book.path, book.title, book.author, "");
+    book.coverBmpPath.clear();
+  }
+}
+}  // namespace
 
 void ReadMenuActivity::onEnter() {
   Activity::onEnter();
@@ -22,6 +84,11 @@ void ReadMenuActivity::onEnter() {
   swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   buildEntries();
   recentBooks = recentBookLoader::load(1);
+  if (!recentBooks.empty()) ensureHeroCover(renderer, recentBooks[0]);
+  // The card shows a progress bar under the author when this is on.
+  if (SETTINGS.showHeroProgressBar && !recentBooks.empty()) {
+    recentBooks[0].progressPercent = loadBookProgress(recentBooks[0].path);
+  }
   selectedIndex = 0;
   headerFocused = false;
   bandStop = StatusBand::Stop::StatusBar;
@@ -33,7 +100,7 @@ void ReadMenuActivity::buildEntries() {
   entries.clear();
   entries.reserve(4);
   entries.push_back({tr(STR_BROWSE_FILES), Folder, HomeMenuItem::FILE_BROWSER});
-  entries.push_back({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuItem::RECENTS});
+  entries.push_back({tr(STR_MENU_RECENT_BOOKS), Recent, HomeMenuItem::LIBRARY});
   if (OPDS_STORE.hasServers()) {
     entries.push_back({tr(STR_OPDS_BROWSER), Library, HomeMenuItem::OPDS_BROWSER});
   }
@@ -52,10 +119,10 @@ void ReadMenuActivity::activateSelected() {
   if (entryIdx < 0 || entryIdx >= static_cast<int>(entries.size())) return;
   switch (entries[entryIdx].item) {
     case HomeMenuItem::FILE_BROWSER:
-      activityManager.goToFileBrowser("/", /*returnToReadMenu=*/true);
+      activityManager.goToFileBrowser({}, /*returnToReadMenu=*/true);
       break;
-    case HomeMenuItem::RECENTS:
-      activityManager.goToRecentBooks(/*returnToReadMenu=*/true);
+    case HomeMenuItem::LIBRARY:
+      activityManager.goToLibrary(/*returnToReadMenu=*/true);
       break;
     case HomeMenuItem::OPDS_BROWSER:
       activityManager.goToBrowser(/*returnToReadMenu=*/true);
@@ -86,6 +153,23 @@ void ReadMenuActivity::loop() {
     // bar (or anywhere else) it is Home, as always.
     if (headerFocused && band.handleRight1(bandStop)) return;
     onGoHome(HomeMenuItem::READ_MENU);
+    return;
+  }
+
+  // Holding Confirm on the card syncs that book's progress with KOReader without opening it.
+  // wasLongPressed() also swallows the release, so the book does not open as well.
+  if (!headerFocused && selectedIndex == 0 && !recentBooks.empty() &&
+      FsHelpers::hasEpubExtension(recentBooks[0].path) && KOREADER_STORE.hasCredentials() &&
+      mappedInput.wasLongPressed(MappedInputManager::Button::Right2, KOSYNC_HOLD_MS)) {
+    if (!KOReaderSyncActivity::launchForBook(renderer, mappedInput, recentBooks[0].path)) {
+      auto notice = makeUniqueNoThrow<ConfirmationActivity>(renderer, mappedInput, tr(STR_SYNC_PROGRESS),
+                                                            tr(STR_SYNC_OPEN_BOOK_FIRST));
+      if (!notice) {
+        LOG_ERR("ReadMenu", "OOM: sync notice");
+        return;
+      }
+      startActivityForResult(std::move(notice), [](const ActivityResult&) {});
+    }
     return;
   }
 

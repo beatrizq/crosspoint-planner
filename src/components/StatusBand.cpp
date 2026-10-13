@@ -27,6 +27,9 @@ namespace {
 // Height of the status bar's focus highlight below the top of its row: a little
 // shorter than the row itself, which carries some breathing room underneath that
 // the highlight would otherwise bleed into the next part.
+// Height of the status row (clock/date/battery) on every screen with a band. MainMenuActivity's STATUS_BAR_HEIGHT
+// and QuickPickActivity's HEADER_CONTENT_HEIGHT are the same 36: keep the three equal.
+constexpr int UNTITLED_STATUS_ROW_HEIGHT = 36;
 constexpr int HIGHLIGHT_INSET = 6;
 // The highlight on a theme's own full header, which is taller than its clock/
 // battery row (see HEADER_FOCUS_HIGHLIGHT_HEIGHT in BaseTheme.h).
@@ -38,6 +41,8 @@ constexpr int GLANCE_STRIP_GAP = 10;
 // The gap between a row's leading bullet/icon and its text.
 constexpr int GLANCE_ICON_GAP = 8;
 constexpr int BULLET_SIZE = 6;
+// The x that stands in for the dot on the "No events" line: the same size as the dot.
+constexpr int NONE_MARK_SIZE = BULLET_SIZE;
 
 // The alert: padding above and below its text, how many lines it may wrap over,
 // its bell icon (bell24.h is 24x24), and the gap under it before whatever follows.
@@ -97,7 +102,12 @@ int drawCalendarRows(const GfxRenderer& renderer, const int y, const std::vector
   int rowY = y + (height - textHeight) / 2;
   for (const auto& row : rows) {
     // No bullet for a fallback line (not synced yet): it isn't an event.
-    if (!row.isFallback) {
+    if (row.isNone) {
+      // An x where an event has its dot.
+      const int markY = rowY + (lineH - NONE_MARK_SIZE) / 2;
+      renderer.drawLine(bulletX, markY, bulletX + NONE_MARK_SIZE - 1, markY + NONE_MARK_SIZE - 1, 2, true);
+      renderer.drawLine(bulletX + NONE_MARK_SIZE - 1, markY, bulletX, markY + NONE_MARK_SIZE - 1, 2, true);
+    } else if (!row.isFallback) {
       renderer.fillRoundedRect(bulletX, rowY + (lineH - BULLET_SIZE) / 2, BULLET_SIZE, BULLET_SIZE, BULLET_SIZE / 2,
                                Color::Black);
     }
@@ -176,7 +186,8 @@ std::vector<StatusBand::EventRow> StatusBand::todaysEvents(const bool includeSyn
     if (halClock.getUtcDateTime(year, month, day, hour, minute)) {
       // clockUtcOffsetQ is biased by 48 (48 == UTC+0), the same clamp and bias every
       // other local-time reader of it uses.
-      const int32_t offsetQuarterHours = static_cast<int32_t>(std::min<uint8_t>(SETTINGS.clockUtcOffsetQ, 104)) - 48;
+      const int32_t offsetQuarterHours =
+          static_cast<int32_t>(std::min<uint8_t>(halClock.utcOffsetQuarterHoursBiased(), 104)) - 48;
       nowMinute = companion::localMinuteOfDay(hour, minute, offsetQuarterHours);
     }
   }
@@ -196,7 +207,13 @@ std::vector<StatusBand::EventRow> StatusBand::todaysEvents(const bool includeSyn
     }
     rows.push_back(std::move(row));
   }
-  // Empty (not a placeholder) when synced and there is genuinely nothing today.
+  // Synced with nothing left today: the Planner (the only caller that sets includeSyncHint) says so
+  // with a line of its own; elsewhere the band just collapses.
+  if (rows.empty() && includeSyncHint) {
+    EventRow none{std::string(tr(STR_NO_EVENTS_TODAY)), "", false};
+    none.isNone = true;
+    rows.push_back(std::move(none));
+  }
   return rows;
 }
 
@@ -232,8 +249,8 @@ int StatusBand::drawUntitled(const GfxRenderer& renderer, const int top, const i
   // The theme's own clock/date/battery row: a null title and subtitle drop the
   // title band and leave just that row (Lyra draws it unconditionally into
   // whatever rect it is given).
-  GUI.drawHeader(renderer, Rect{0, top, pageWidth, statusRowHeight}, /*title=*/nullptr, /*subtitle=*/nullptr,
-                 /*showRule=*/false, /*includeStatusRow=*/true);
+  GUI.drawLegacyHeader(renderer, Rect{0, top, pageWidth, statusRowHeight}, /*title=*/nullptr, /*subtitle=*/nullptr,
+                       /*showRule=*/false, /*includeStatusRow=*/true);
   // Hovering it: a true pixel invert over the row, not a fill (which would paint
   // over what the theme just drew).
   if (focus == Stop::StatusBar) renderer.invertRect(0, top, pageWidth, statusRowHeight - HIGHLIGHT_INSET);
@@ -263,7 +280,7 @@ int StatusBand::drawTitled(const GfxRenderer& renderer, const char* title, const
     // Nothing to put between the status bar and the title: the theme's own single
     // header, exactly as the screen always drew it.
     const Rect headerRect{0, top, pageWidth, metrics.headerHeight};
-    GUI.drawHeader(renderer, headerRect, title, subtitle);
+    GUI.drawLegacyHeader(renderer, headerRect, title, subtitle);
     if (focus == Stop::StatusBar) {
       renderer.invertRect(headerRect.x, headerRect.y, headerRect.width,
                           std::min(FULL_HEADER_HIGHLIGHT, headerRect.height));
@@ -275,9 +292,12 @@ int StatusBand::drawTitled(const GfxRenderer& renderer, const char* title, const
   // The status bar, then the rows and the alert, then the title -- the title header
   // is the theme's own with its status row left out, which puts the title and its
   // rule exactly where the single header would have (batteryBarHeight + 3 down).
-  const int statusRowHeight = metrics.batteryBarHeight;
-  GUI.drawHeader(renderer, Rect{0, top, pageWidth, statusRowHeight}, nullptr, nullptr, /*showRule=*/false,
-                 /*includeStatusRow=*/true);
+  // The same row height the untitled screens (main menu, companion) use, so the calendar rows and the
+  // alert sit at the same y on every screen; the theme's batteryBarHeight is a little taller than the
+  // clock/battery row actually needs.
+  const int statusRowHeight = UNTITLED_STATUS_ROW_HEIGHT;
+  GUI.drawLegacyHeader(renderer, Rect{0, top, pageWidth, statusRowHeight}, nullptr, nullptr, /*showRule=*/false,
+                       /*includeStatusRow=*/true);
   if (focus == Stop::StatusBar) {
     renderer.invertRect(0, top, pageWidth, std::min(FULL_HEADER_HIGHLIGHT, statusRowHeight));
   }
@@ -286,8 +306,8 @@ int StatusBand::drawTitled(const GfxRenderer& renderer, const char* title, const
   y += drawAlert(renderer, y, focus == Stop::Alert);
 
   const int titleHeight = metrics.headerHeight - metrics.batteryBarHeight;
-  GUI.drawHeader(renderer, Rect{0, y, pageWidth, titleHeight}, title, subtitle, /*showRule=*/true,
-                 /*includeStatusRow=*/false);
+  GUI.drawLegacyHeader(renderer, Rect{0, y, pageWidth, titleHeight}, title, subtitle, /*showRule=*/true,
+                       /*includeStatusRow=*/false);
   lastBottom = y + titleHeight;
   return lastBottom;
 }

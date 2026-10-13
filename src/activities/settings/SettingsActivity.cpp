@@ -2,23 +2,28 @@
 
 #include <BoardConfig.h>
 #include <GfxRenderer.h>
+#include <HalClock.h>
 #include <Logging.h>
+#include <Memory.h>
 #include <WiFi.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 
+#include "AboutActivity.h"
 #include "AppOrderActivity.h"
 #include "ButtonRemapActivity.h"
 #include "ClearCacheActivity.h"
-#include "ClockOffsetActivity.h"
-#include "ClockSyncActivity.h"
+#include "ClockSettingsActivity.h"
 #include "CompanionSettingsActivity.h"
 #include "CrossPointSettings.h"
 #include "FontDownloadActivity.h"
 #include "GCalSettingsActivity.h"
+#include "HomeButtonSettings.h"
+#include "HomeButtonSettingsActivity.h"
 #include "KOReaderSettingsActivity.h"
+#include "KeyboardLayoutsActivity.h"
 #include "LanguageSelectActivity.h"
 #include "MappedInputManager.h"
 #include "OpdsServerListActivity.h"
@@ -35,6 +40,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/BleNotifyRelay.h"
+#include "util/Version.h"
 
 StrId SettingsActivity::bucketName(const SettingsBucket bucket) {
   switch (bucket) {
@@ -73,8 +79,14 @@ void SettingsActivity::rebuildSettingsLists() {
   DictionaryRegistry::discover(dictionaries);
 
   for (auto& setting : getSettingsList(&sdFontSystem.registry(), &dictionaries)) {
-    if (setting.category == StrId::STR_NONE_OPT) continue;
+    if (setting.category == StrId::STR_NONE_OPT || home_button::isSetting(setting.valuePtr)) continue;
     if (setting.category == StrId::STR_CAT_DISPLAY) {
+      // The sunlight fading fix is a grayscale-waveform compensation that does
+      // not apply on the X4 Pro / X4 Classic (plain OTP waveform, same panels).
+      if (setting.valuePtr == &CrossPointSettings::fadingFix &&
+          (BoardConfig::isX4Pro() || BoardConfig::isX4Classic())) {
+        continue;
+      }
       displaySettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_READER) {
       // Settings merged into "Text Settings"
@@ -82,6 +94,8 @@ void SettingsActivity::rebuildSettingsLists() {
       if (setting.inTextSettings) continue;
       readerSettings.push_back(setting);
     } else if (setting.category == StrId::STR_CAT_CONTROLS) {
+      // Holding Confirm is KOReader sync in the reader now, so this choice no longer exists on-device.
+      if (setting.valuePtr == &CrossPointSettings::longPressMenuFunction) continue;
       if (setting.valuePtr == &CrossPointSettings::pwrBtnFootnoteBack &&
           SETTINGS.shortPwrBtn != CrossPointSettings::SHORT_PWRBTN::FOOTNOTES) {
         continue;
@@ -101,9 +115,11 @@ void SettingsActivity::rebuildSettingsLists() {
   if (!BoardConfig::hasTouch()) {
     systemSettings.push_back(SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   }
+  if (BoardConfig::hasHomeKey()) {
+    systemSettings.push_back(SettingInfo::Action(StrId::STR_HOME_BUTTON, SettingAction::HomeButton));
+  }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
-  // Where books come from and how reading progress follows them around.
-  librarySettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
+  // Where books come from.
   librarySettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   plannerSettings.push_back(SettingInfo::Action(StrId::STR_TODOIST, SettingAction::Todoist));
   plannerSettings.push_back(SettingInfo::Action(StrId::STR_CALENDAR, SettingAction::GoogleCalendar));
@@ -113,7 +129,11 @@ void SettingsActivity::rebuildSettingsLists() {
     systemSettings.push_back(SettingInfo::Action(StrId::STR_CHECK_UPDATES, SettingAction::CheckForUpdates));
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_SD_FIRMWARE_UPDATE, SettingAction::SdFirmwareUpdate));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_FILE_TRANSFER, SettingAction::FileTransfer));
+  // Timezone, DST, 12/24h and the NTP sync. Offered on every board: without a hardware RTC the
+  // device keeps time from the system clock, which the same screen's sync sets.
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_CLOCK, SettingAction::ClockSettings));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_KEYBOARD_LAYOUTS, SettingAction::KeyboardLayouts));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_ABOUT, SettingAction::About));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_LANGUAGE, SettingAction::Language));
   readerSettings.insert(readerSettings.begin(),
                         SettingInfo::Action(StrId::STR_TEXT_SETTINGS, SettingAction::TextSettings));
@@ -125,6 +145,10 @@ void SettingsActivity::rebuildSettingsLists() {
                         SettingInfo::Action(StrId::STR_CAT_CONTROLS, SettingAction::ControlsMenu));
   readerSettings.insert(readerSettings.begin() + 3,
                         SettingInfo::Action(StrId::STR_CAT_LIBRARY, SettingAction::LibraryMenu));
+  // Directly under Reader, not inside a submenu: the Sync screen needs heap headroom for TLS,
+  // and every stacked Settings screen holds its own copy of the lists.
+  readerSettings.insert(readerSettings.begin() + 4,
+                        SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
   // Clear Reading Cache sits just ahead of Hide Battery %, so the Reader tab ends
   // with the cache action and then the two status-bar entries.
   {
@@ -134,12 +158,6 @@ void SettingsActivity::rebuildSettingsLists() {
     readerSettings.insert(hideBattery, SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   }
   readerSettings.push_back(SettingInfo::Action(StrId::STR_CUSTOMISE_STATUS_BAR, SettingAction::CustomiseStatusBar));
-  // Not reader-specific (see clockFormat's own comment in SettingsList.h), so
-  // the offset editor and manual sync live in Display rather than nested under
-  // the reader's status bar screen.
-  displaySettings.push_back(SettingInfo::Action(StrId::STR_CLOCK_UTC_OFFSET, SettingAction::ClockOffset));
-  displaySettings.push_back(SettingInfo::Action(StrId::STR_CLOCK_SYNC_NOW, SettingAction::ClockSync));
-
   // Update currentSettings pointer and count for the active category
   applyCategorySelection();
 }
@@ -184,7 +202,7 @@ void SettingsActivity::onEnter() {
   band.setEnabled(!isSubmenu);
   band.poll();
   preserveQuickResumeTimeoutOn =
-      SETTINGS.timeoutSleepScreen == CrossPointSettings::TIMEOUT_SLEEP_SCREEN::TIMEOUT_QUICK_RESUME;
+      SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
   quickResumeTimeoutAutoEnabled = false;
   // Only the top-level screen owns the sleep-screen rules; a submenu holds none
   // of those settings.
@@ -222,8 +240,9 @@ void SettingsActivity::loop() {
   if (band.poll()) requestUpdate();
   if (headerFocused) bandStop = band.clamp(bandStop);
 
-  // Handle actions with early return
-  if (mappedInput.wasPressed(MappedInputManager::Button::Right2)) {
+  // Acts on the release: a popup opened on the press would still see this button's release
+  // and select its current option, closing at once.
+  if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (headerFocused) {
       if (bandStop != StatusBand::Stop::StatusBar) {
         // Dismisses the alert (the next-newest takes its place); nothing to do on
@@ -435,7 +454,8 @@ void SettingsActivity::toggleCurrentSetting() {
 
   const auto& setting = (*currentSettings)[selectedSetting];
   const bool sleepScreenChanged = setting.valuePtr == &CrossPointSettings::sleepScreen;
-  const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::timeoutSleepScreen;
+  const bool quickResumeTimeoutChanged = setting.valuePtr == &CrossPointSettings::quickResumeSleepScreen;
+  const bool bleChanged = setting.valuePtr == &CrossPointSettings::bleEnabled;
 
   if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {
     openSleepTimeoutPicker();
@@ -453,26 +473,26 @@ void SettingsActivity::toggleCurrentSetting() {
     // must be consulted: a member-pointer enum backed only by string values
     // would otherwise skip the popup and then take a modulo by zero below.
     const uint8_t totalValues = setting.enumStringValues.empty()
-                                    ? static_cast<uint8_t>(setting.enumValues.size())
+                                    ? static_cast<uint8_t>(setting.enumLabels().size())
                                     : static_cast<uint8_t>(setting.enumStringValues.size());
     if (totalValues == 0) return;
 
     if (totalValues > 2) {
       const auto valuePtr = setting.valuePtr;
-      // Their structure, with this branch's own side effect kept and
-      // applyUiSettingChange dropped - that arrives with an upstream commit this
-      // branch does not have.
       auto onSelect = [this, valuePtr, sleepScreenChanged, quickResumeTimeoutChanged](int idx) {
         SETTINGS.*valuePtr = idx;
         syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
         SETTINGS.saveToFile();
         rebuildSettingsLists();
+        // A theme change takes effect on this very screen, not only after leaving it.
+        if (valuePtr == &CrossPointSettings::uiTheme) UITheme::getInstance().reload();
       };
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, currentValue, std::move(onSelect));
       } else {
-        optionPopup.show(setting.nameId, setting.enumValues.data(), static_cast<int>(setting.enumValues.size()),
-                         currentValue, std::move(onSelect));
+        const auto labels = setting.enumLabels();
+        optionPopup.show(setting.nameId, labels.data(), static_cast<int>(labels.size()), currentValue,
+                         std::move(onSelect));
       }
       requestUpdate();
       return;
@@ -480,7 +500,7 @@ void SettingsActivity::toggleCurrentSetting() {
     SETTINGS.*(setting.valuePtr) = (currentValue + 1) % totalValues;
   } else if (setting.type == SettingType::ENUM && setting.valueGetter && setting.valueSetter) {
     const uint8_t totalValues = setting.enumStringValues.empty()
-                                    ? static_cast<uint8_t>(setting.enumValues.size())
+                                    ? static_cast<uint8_t>(setting.enumLabels().size())
                                     : static_cast<uint8_t>(setting.enumStringValues.size());
     const uint8_t cur = setting.valueGetter();
     if (totalValues > 2) {
@@ -494,8 +514,8 @@ void SettingsActivity::toggleCurrentSetting() {
       if (!setting.enumStringValues.empty()) {
         optionPopup.show(setting.nameId, setting.enumStringValues, cur, std::move(onSelect));
       } else {
-        optionPopup.show(setting.nameId, setting.enumValues.data(), static_cast<int>(setting.enumValues.size()), cur,
-                         std::move(onSelect));
+        const auto labels = setting.enumLabels();
+        optionPopup.show(setting.nameId, labels.data(), static_cast<int>(labels.size()), cur, std::move(onSelect));
       }
       requestUpdate();
       return;
@@ -519,7 +539,20 @@ void SettingsActivity::toggleCurrentSetting() {
         startActivityForResult(std::make_unique<StatusBarSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::KOReaderSync:
-        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
+        // The sync screens need heap headroom for TLS; drop this screen's lists while they run
+        // (swap, not clear(), so the capacity is released) and rebuild them on return.
+        std::vector<SettingInfo>().swap(displaySettings);
+        std::vector<SettingInfo>().swap(readerSettings);
+        std::vector<SettingInfo>().swap(librarySettings);
+        std::vector<SettingInfo>().swap(controlsSettings);
+        std::vector<SettingInfo>().swap(systemSettings);
+        std::vector<SettingInfo>().swap(plannerSettings);
+        settingsCount = 0;
+        startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput),
+                               [this](const ActivityResult&) {
+                                 SETTINGS.saveToFile();
+                                 rebuildSettingsLists();
+                               });
         break;
       case SettingAction::Todoist:
         startActivityForResult(std::make_unique<TodoistSettingsActivity>(renderer, mappedInput), resultHandler);
@@ -569,11 +602,6 @@ void SettingsActivity::toggleCurrentSetting() {
               requestUpdate();
             });
         break;
-      case SettingAction::FileTransfer:
-        // Replaces this screen rather than running as a sub-activity, like every
-        // other entry into File Transfer; it comes back to Settings on exit.
-        activityManager.goToFileTransfer(FileTransferReturn::Settings);
-        break;
       case SettingAction::DownloadFonts:
         startActivityForResult(std::make_unique<FontDownloadActivity>(renderer, mappedInput),
                                [this](const ActivityResult&) {
@@ -592,12 +620,36 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::Language:
         startActivityForResult(std::make_unique<LanguageSelectActivity>(renderer, mappedInput), resultHandler);
         break;
-      case SettingAction::ClockOffset:
-        // Saves on exit itself, like it did nested under Customise Status Bar.
-        startActivityForResult(std::make_unique<ClockOffsetActivity>(renderer, mappedInput), nullptr);
+      case SettingAction::ClockSettings:
+        if (auto activity = makeUniqueNoThrow<ClockSettingsActivity>(renderer, mappedInput)) {
+          startActivityForResult(std::move(activity), resultHandler);
+        } else {
+          LOG_ERR("SETTINGS", "OOM: ClockSettingsActivity");
+        }
         break;
-      case SettingAction::ClockSync:
-        startActivityForResult(std::make_unique<ClockSyncActivity>(renderer, mappedInput), nullptr);
+      case SettingAction::HomeButton: {
+        // Activities must outlive this call and are owned by the activity stack.
+        auto activity = makeUniqueNoThrow<HomeButtonSettingsActivity>(renderer, mappedInput);
+        if (!activity) {
+          LOG_ERR("SET", "OOM: Home button settings");
+          return;
+        }
+        startActivityForResult(std::move(activity), [this](const ActivityResult&) { requestUpdate(); });
+        return;
+      }
+      case SettingAction::KeyboardLayouts:
+        if (auto activity = makeUniqueNoThrow<KeyboardLayoutsActivity>(renderer, mappedInput)) {
+          startActivityForResult(std::move(activity), nullptr);
+        } else {
+          LOG_ERR("SETTINGS", "OOM: KeyboardLayoutsActivity");
+        }
+        break;
+      case SettingAction::About:
+        if (auto activity = makeUniqueNoThrow<AboutActivity>(renderer, mappedInput)) {
+          startActivityForResult(std::move(activity), nullptr);
+        } else {
+          LOG_ERR("SETTINGS", "OOM: AboutActivity");
+        }
         break;
       case SettingAction::None:
         // Do nothing
@@ -611,22 +663,25 @@ void SettingsActivity::toggleCurrentSetting() {
   syncQuickResumeTimeoutForSleepScreen(sleepScreenChanged, quickResumeTimeoutChanged);
   SETTINGS.saveToFile();
   rebuildSettingsLists();
+  // Turning it off frees the stack's heap now; turning it on starts it at the next boot.
+  if (bleChanged && !SETTINGS.bleEnabled) BleNotifyRelay::pause();
+  if (setting.valuePtr == &CrossPointSettings::uiTheme) UITheme::getInstance().reload();
   selectedSettingIndex = std::min(selectedSettingIndex, settingsCount);
 }
 
 void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChanged, bool quickResumeTimeoutChanged) {
   if (quickResumeTimeoutChanged) {
     preserveQuickResumeTimeoutOn =
-        SETTINGS.timeoutSleepScreen == CrossPointSettings::TIMEOUT_SLEEP_SCREEN::TIMEOUT_QUICK_RESUME;
+        SETTINGS.quickResumeSleepScreen == CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
     quickResumeTimeoutAutoEnabled = false;
   }
 
   if (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME) {
-    if (SETTINGS.timeoutSleepScreen != CrossPointSettings::TIMEOUT_SLEEP_SCREEN::TIMEOUT_QUICK_RESUME) {
+    if (SETTINGS.quickResumeSleepScreen != CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT) {
       // Redundant while Sleep Screen mode itself is Quick Resume -- every
       // sleep already resumes quick regardless of this setting -- but showing
       // Sleep here would read as contradicting that.
-      SETTINGS.timeoutSleepScreen = CrossPointSettings::TIMEOUT_SLEEP_SCREEN::TIMEOUT_QUICK_RESUME;
+      SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_AFTER_TIMEOUT;
       quickResumeTimeoutAutoEnabled = !preserveQuickResumeTimeoutOn;
     } else if (sleepScreenChanged && !preserveQuickResumeTimeoutOn) {
       quickResumeTimeoutAutoEnabled = true;
@@ -635,7 +690,7 @@ void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChan
   }
 
   if (sleepScreenChanged && quickResumeTimeoutAutoEnabled && !preserveQuickResumeTimeoutOn) {
-    SETTINGS.timeoutSleepScreen = CrossPointSettings::TIMEOUT_SLEEP_SCREEN::TIMEOUT_SLEEP;
+    SETTINGS.quickResumeSleepScreen = CrossPointSettings::QUICK_RESUME_SLEEP_SCREEN::QUICK_RESUME_NEVER;
     quickResumeTimeoutAutoEnabled = false;
   }
 }
@@ -666,9 +721,9 @@ void SettingsActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   if (headerFocused) bandStop = band.clamp(bandStop);
-  const int headerBottom =
-      band.drawTitled(renderer, isSubmenu ? I18N.get(bucketName(tabBuckets[0])) : tr(STR_SETTINGS_TITLE),
-                      isSubmenu ? nullptr : CROSSPOINT_VERSION, headerFocused ? bandStop : StatusBand::Stop::None);
+  const int headerBottom = band.drawTitled(
+      renderer, isSubmenu ? I18N.get(bucketName(tabBuckets[0])) : tr(STR_SETTINGS_TITLE),
+      isSubmenu ? nullptr : crosspointBuildVersion(), headerFocused ? bandStop : StatusBand::Stop::None);
 
   std::vector<TabInfo> tabs;
   tabs.reserve(categoryCount());
@@ -700,15 +755,15 @@ void SettingsActivity::render(RenderLock&&) {
           // read walked off the end of it into the string table.
           if (!setting.enumStringValues.empty()) {
             if (value < setting.enumStringValues.size()) valueText = setting.enumStringValues[value];
-          } else if (value < setting.enumValues.size()) {
-            valueText = I18N.get(setting.enumValues[value]);
+          } else if (value < setting.enumLabels().size()) {
+            valueText = I18N.get(setting.enumLabels()[value]);
           }
         } else if (setting.type == SettingType::ENUM && setting.valueGetter) {
           const uint8_t value = setting.valueGetter();
           if (!setting.enumStringValues.empty() && value < setting.enumStringValues.size()) {
             valueText = setting.enumStringValues[value];
-          } else if (value < setting.enumValues.size()) {
-            valueText = I18N.get(setting.enumValues[value]);
+          } else if (value < setting.enumLabels().size()) {
+            valueText = I18N.get(setting.enumLabels()[value]);
           }
         } else if (setting.type == SettingType::VALUE && setting.valuePtr != nullptr) {
           if (setting.nameId == StrId::STR_TIME_TO_SLEEP) {

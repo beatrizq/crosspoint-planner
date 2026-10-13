@@ -8,6 +8,8 @@ class GfxRenderer;
 namespace LyraMetrics {
 constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .batteryHeight = 12,
+                                 // Shared anchor for every header band, including the cover-grid
+                                 // home's status band; roomy enough that the strip clears the edge.
                                  .topPadding = 5,
                                  .batteryBarHeight = 40,
                                  .headerHeight = 84,
@@ -17,6 +19,19 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .contentSidePadding = 20,
                                  .listRowHeight = 40,
                                  .listWithSubtitleRowHeight = 60,
+                                 .listRowGap = 0,
+                                 .listRowRadius = 6,
+                                 .listInset = 20,
+                                 .listSidePadding = 8,
+                                 .listSelectionStyle = 1,  // light pill
+                                 .listScrollWidth = 4,
+                                 .listScrollSide = 0,
+                                 .listTitleBold = false,
+                                 .headerSidePadding = 28,  // = contentSidePadding + the 8px pill/row text inset
+                                 .headerUnderlineSize = 3,
+                                 .headerTitleAlign = 0,  // left
+                                 .headerBatterySide = 0,
+                                 .headerClockCentered = false,
                                  .menuRowHeight = 64,
                                  .menuSpacing = 8,
                                  .tabSpacing = 8,
@@ -63,28 +78,23 @@ constexpr ThemeMetrics values = {.batteryWidth = 16,
                                  .popupProgressOutlineInverted = false,
                                  .optionPopupItemSpacing = 8,
                                  .optionPopupInnerPadding = 20,
-                                 .optionPopupSelectionHPadding = 16,
                                  .optionPopupSelectionVPadding = 12,
-                                 .optionPopupTitleGap = 16,
-                                 .optionPopupUseSmallFont = true,
-                                 .optionPopupOptionFontBold = false,
-                                 .optionPopupSelectionRadius = 6,
-                                 .optionPopupSelectionLight = true,
-                                 .optionPopupDrawAllRows = false,
                                  .optionPopupDialogSideMargin = 20,
-                                 .optionPopupTitleSeparator = true,
                                  .textFieldHorizontalPadding = 6,
                                  .textFieldNormalThickness = 1,
                                  .textFieldCursorThickness = 3,
-                                 .textFieldLineEndOffset = 0};
-}
+                                 .textFieldLineEndOffset = 0,
+                                 .controlRadius = 6,
+                                 .sheetRadius = 6,
+                                 .capsuleRadius = 6};
+}  // namespace LyraMetrics
 
 class LyraTheme : public BaseTheme {
  public:
   // Component drawing methods
   void fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const override;
-  void drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle, bool showRule,
-                  bool includeStatusRow) const override;
+  void drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle, bool showRule,
+                        bool includeStatusRow) const override;
   void drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label,
                      const char* rightLabel = nullptr) const override;
   void drawTabBar(const GfxRenderer& renderer, Rect rect, const std::vector<TabInfo>& tabs,

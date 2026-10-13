@@ -59,9 +59,7 @@ TEST(CompanionMood, JustUnderHappyIsStillSatisfied) {
   EXPECT_EQ(companion::evaluate(withClock(t.happyPoints, 0)), Mood::Happy);
 }
 
-TEST(CompanionMood, AnyCompletionTodayIsSatisfied) {
-  EXPECT_EQ(companion::evaluate(withClock(1, 0)), Mood::Satisfied);
-}
+TEST(CompanionMood, AnyCompletionTodayIsSatisfied) { EXPECT_EQ(companion::evaluate(withClock(1, 0)), Mood::Satisfied); }
 
 TEST(CompanionMood, NoGraceForYesterdaysActivity) {
   // Nothing done today: mood decays immediately, with no carry-over credit

@@ -32,7 +32,7 @@ void BleNotificationDetailActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   char timeBuf[16] = "";
-  HalClock::formatHourMinute(timeBuf, sizeof(timeBuf), hour, minute, SETTINGS.clockUtcOffsetQ,
+  HalClock::formatHourMinute(timeBuf, sizeof(timeBuf), hour, minute, halClock.utcOffsetQuarterHoursBiased(),
                              SETTINGS.clockFormat == 1);
   const char* headerTitle = isCall ? tr(STR_BLE_INCOMING_CALL) : sender.c_str();
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.headerHeight}, headerTitle, timeBuf);

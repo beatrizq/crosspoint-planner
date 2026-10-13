@@ -11,6 +11,7 @@
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
 #include "RenderLock.h"
+#include "ResumeScreen.h"
 #include "util/ScreenshotInfo.h"
 
 class Activity {
@@ -43,6 +44,9 @@ class Activity {
 
   virtual bool skipLoopDelay() { return false; }
   virtual bool preventAutoSleep() { return false; }
+  // Exclusive storage activities suspend global controls and normal activity
+  // transitions so no filesystem code races a raw SD-card owner.
+  virtual bool requiresExclusiveStorageLoop() const { return false; }
   virtual bool isReaderActivity() const { return false; }
   // Returns true when the activity schedules its own forced refresh.
   virtual bool handleForcedRefresh() { return false; }
@@ -50,6 +54,10 @@ class Activity {
   // For the sleep-wake resume flag: whether this is the companion's
   // quick-pick reveal screen, mirroring isReaderActivity() above.
   virtual bool isQuickPickActivity() const { return false; }
+  // The screen a Quick Resume wake should reopen when this is the bottom of the stack at sleep
+  // time, and the argument (e.g. a folder) it needs; None for screens that cannot be rebuilt.
+  virtual ResumeScreen resumeScreen() const { return ResumeScreen::None; }
+  virtual std::string resumeArg() const { return {}; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
 
@@ -61,24 +69,18 @@ class Activity {
   void setResult(ActivityResult&& result);
 
   // Finish this activity and return to the previous one on the stack (if any)
-  void finish();
+  static void finish();
 
   // Convenience method to facilitate API transition to ActivityManager
   // TODO: remove this in near future
-  void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
-  void onSelectBook(const std::string& path);
+  static void onGoHome(HomeMenuItem item = HomeMenuItem::NONE);
+  static void onSelectBook(const std::string& path);
 
  protected:
-  enum class ListTouchResult : uint8_t {
-    None,      // touch did not hit the list
-    Consumed,  // touchdown moved the highlight (repaint already requested)
-    Activated  // tap landed on a row: selectedIndex is updated, caller activates it
-  };
-
-  // Shared touch handling for selectable list screens: touchdown highlights the
-  // touched row, a tap selects and reports Activated. The caller supplies the
-  // list band and runs its own activate action on Activated.
-  ListTouchResult handleListTouch(int& selectedIndex, int itemCount, int listTop, int listHeight, bool hasSubtitle);
+  enum class ListTouchResult : uint8_t { None, Consumed, Activated };
+  // The fork's list screens call this for touch input; the boards it targets (X3/X4) have no touch
+  // panel, and upstream's own touch layer moved into FreeInkUI, so there is nothing to handle here.
+  ListTouchResult handleListTouch(int&, int, int, int, bool) { return ListTouchResult::None; }
 
   // Opens the keyboard on a CrossPointSettings char field and persists the
   // result. Shared by the app settings screens for their Nickname rows, which are

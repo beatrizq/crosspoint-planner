@@ -152,6 +152,7 @@ class QuickPickActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool isQuickPickActivity() const override { return true; }
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Planner; }
 
  private:
   // Tasks tab row action -- mirrors TasksActivity's own showRowOptions() and
@@ -264,8 +265,8 @@ class QuickPickActivity final : public Activity {
   // -- same shape as TasksActivity's own visibleTabs/currentKind(), kept in
   // sync with it via the shared TaskTabModel (see this file's own header
   // comment).
-  std::vector<taskTabModel::TaskTabKind> visibleTabs{taskTabModel::TaskTabKind::OVERDUE};
-  taskTabModel::TaskTabKind activeKind = taskTabModel::TaskTabKind::OVERDUE;
+  std::vector<taskTabModel::TaskTab> visibleTabs{taskTabModel::TaskTab{}};
+  taskTabModel::TaskTab activeKind;
   // While focus == Embedded: whether the tab bar itself, not a row, has the
   // highlight -- "the start of the embedded section" (see this file's own
   // header comment), and always reachable there regardless of whether the

@@ -2,39 +2,24 @@
 
 #include <I18n.h>
 
-#include <string>
-#include <utility>
+#include <cstddef>
 
 #include "MappedInputManager.h"
 #include "activities/Activity.h"
+#include "components/UiAppHost.h"
 #include "util/ButtonNavigator.h"
 
 class GfxRenderer;
 
-class IntervalSelectionActivity final : public Activity {
+class IntervalSelectionActivity final : public Activity, private UiAppHost {
  public:
-  // `customTitle` and `valueSuffix` are for callers whose title or unit is a
-  // runtime string rather than a translated StrId (e.g. a task's name) - left empty, titleId/valueFormatId behave
-  // exactly as before.
+  // ignoreInitialConfirmRelease: the screen was opened with Select still held (it was the press that
+  // opened it), so that button's release must not confirm the dialog straight away.
   explicit IntervalSelectionActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, const char* activityName,
                                      StrId titleId, int initialValue, int minValue, int maxValue, int smallStep,
                                      int largeStep, StrId valueFormatId = StrId::STR_NONE_OPT,
                                      bool readerActivity = false, bool ignoreInitialConfirmRelease = false,
-                                     StrId maxBoundaryLabelId = StrId::STR_NONE_OPT, std::string customTitle = "",
-                                     std::string valueSuffix = "")
-      : Activity(activityName, renderer, mappedInput),
-        titleId(titleId),
-        valueFormatId(valueFormatId),
-        maxBoundaryLabelId(maxBoundaryLabelId),
-        value(initialValue),
-        minValue(minValue),
-        maxValue(maxValue),
-        smallStep(smallStep),
-        largeStep(largeStep),
-        readerActivity(readerActivity),
-        ignoreConfirmRelease(ignoreInitialConfirmRelease),
-        customTitle(std::move(customTitle)),
-        valueSuffix(std::move(valueSuffix)) {}
+                                     StrId maxBoundaryLabelId = StrId::STR_NONE_OPT);
 
   void onEnter() override;
   void loop() override;
@@ -42,6 +27,14 @@ class IntervalSelectionActivity final : public Activity {
   bool isReaderActivity() const override { return readerActivity; }
 
  private:
+  // The UiAppHost app hosts the shared slider dialog popup (capsule slider,
+  // [-] [+] [Confirm] buttons) drawn over the screen underneath.
+  static void intervalScreen(UiScreen& screen, void* user);
+  static void onSliderEvent(const freeink::ui::ActionEvent& event, void* user);
+  static void onStepEvent(const freeink::ui::ActionEvent& event, void* user);
+  static void onOkEvent(const freeink::ui::ActionEvent& event, void* user);
+  void buildIntervalScreen(UiScreen& screen);
+
   StrId titleId;
   StrId valueFormatId;
   StrId maxBoundaryLabelId;
@@ -52,17 +45,17 @@ class IntervalSelectionActivity final : public Activity {
   int largeStep;
   bool readerActivity;
   bool ignoreConfirmRelease;
-  std::string customTitle;
-  std::string valueSuffix;
-  bool draggingBar = false;
   ButtonNavigator buttonNavigator;
 
+  // Swallow the swipe/tap fallout of a slider drag so its release can't trigger
+  // the back gesture and cancel the dialog.
+  bool draggingSlider = false;
+
   void adjustValue(int delta);
+  // Absolute value (clamped), from slider drag/tap positions.
+  void setValue(int candidate);
   int clampedValue(int candidate) const;
-  void drawStepHintLine(int y, StrId labelId, int step);
-  // The Y the slider bar sits at, centring the whole title/value/bar/hint
-  // block within the screen rather than pinning it near the top. Shared by
-  // loop() (touch/drag hit-testing) and render() so they can never disagree
-  // on where the bar actually is.
-  int barY() const;
+  void formatValue(char* buffer, size_t size, int forValue) const;
+  void cancel();
+  void confirm();
 };

@@ -115,8 +115,8 @@ void CompanionSessionActivity::render(RenderLock&&) {
   const int bubbleWidth = textFit.textWidth + PAD * 2;
 
   char untilTime[16] = "";
-  HalClock::formatHourMinute(untilTime, sizeof(untilTime), endHourUtc, endMinuteUtc, SETTINGS.clockUtcOffsetQ,
-                             SETTINGS.clockFormat == 1);
+  HalClock::formatHourMinute(untilTime, sizeof(untilTime), endHourUtc, endMinuteUtc,
+                             halClock.utcOffsetQuarterHoursBiased(), SETTINGS.clockFormat == 1);
   char untilLine[48];
   snprintf(untilLine, sizeof(untilLine), tr(STR_COMPANION_SESSION_UNTIL), untilTime);
   // Same size as the header's own title, so this reads as a second line of

@@ -48,7 +48,16 @@ void drawScrollBar(const GfxRenderer& renderer, Rect rect, int itemCount, int pa
 int coverWidth = 0;
 
 void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
-                                  const bool showRule, const bool includeStatusRow) const {
+                                  const bool backButton) const {
+  // Home screen header is custom-rendered in drawRecentBookCover.
+  if (title == nullptr) {
+    return;
+  }
+  BaseTheme::drawHeader(renderer, rect, title, subtitle, backButton);
+}
+
+void RoundedRaffTheme::drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
+                                        const bool showRule, const bool includeStatusRow) const {
   (void)subtitle;
   (void)showRule;  // This theme never draws a header rule to begin with.
   // Home screen header is custom-rendered in drawRecentBookCover.
@@ -56,14 +65,15 @@ void RoundedRaffTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const 
     return;
   }
   const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
-  const int titleX = rect.x + sidePadding;
+  // Starts where the row text does: inside the row card, not at the card's edge.
+  const int titleX = rect.x + sidePadding + kInteractiveInsetX;
   const int titleY = rect.y + 14;
 
   // A second, embedded header drawn mid-screen (QuickPickActivity's own
   // scaled-down Tasks section below the companion figure) skips the battery
   // group entirely -- it already has one at the top of the screen, and the
   // title gets the full width instead.
-  int maxTitleWidth = rect.width - sidePadding * 2;
+  int maxTitleWidth = rect.width - sidePadding * 2 - kInteractiveInsetX;
   if (includeStatusRow) {
     const bool showBatteryPercentage =
         SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
@@ -228,8 +238,11 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
           Bitmap bitmap(file);
           if (bitmap.parseHeaders() == BmpReaderError::Ok) {
             coverWidth = bitmap.getWidth();
-            renderer.drawBitmap(bitmap, tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
-                                RoundedRaffMetrics::values.homeCoverHeight);
+            // Narrow covers come out taller than the slot; fill 1:1 and crop
+            // vertically instead of rescaling the dither.
+            drawCoverThumbFill(renderer, bitmap,
+                               Rect{tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
+                                    RoundedRaffMetrics::values.homeCoverHeight});
             renderer.maskRoundedRectOutsideCorners(tileX + (tileWidth - coverWidth) / 2, imgY, coverWidth,
                                                    RoundedRaffMetrics::values.homeCoverHeight, kCoverRadius,
                                                    Color::LightGray);
@@ -274,13 +287,17 @@ void RoundedRaffTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, con
   }
 }
 
+int RoundedRaffTheme::getMenuRowHeight(const GfxRenderer& renderer) const {
+  return renderer.getLineHeight(kTitleFontId) + 20;  // 10px top + 10px bottom
+}
+
 void RoundedRaffTheme::drawButtonMenu(GfxRenderer& renderer, Rect rect, int buttonCount, int selectedIndex,
                                       const std::function<std::string(int index)>& buttonLabel,
                                       const std::function<UIIcon(int index)>& rowIcon) const {
   (void)rowIcon;
   const int sidePadding = RoundedRaffMetrics::values.contentSidePadding;
   const int rowX = rect.x + sidePadding;
-  const int rowHeight = renderer.getLineHeight(kTitleFontId) + 20;  // 10px top + 10px bottom
+  const int rowHeight = getMenuRowHeight(renderer);  // shared with HomeActivity's touch grid
   const int rowGap = kSelectableRowGap;
   const int rowStep = rowHeight + rowGap;
   const int pageItems = std::max(1, rect.height / rowStep);
@@ -439,6 +456,13 @@ void RoundedRaffTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, 
   const int groupWidth = (pageWidth - sidePadding * 2 - groupGap) / 2;
   const int hintY = pageHeight - hintHeight - bottomMargin;
   const int textY = hintY + (hintHeight - renderer.getLineHeight(kGuideFontId)) / 2;
+
+  if (renderer.getRenderMode() != GfxRenderer::BW && !renderer.grayPlanesAreAbsolute()) {
+    renderer.fillRect(sidePadding, hintY, groupWidth, hintHeight, true);
+    renderer.fillRect(sidePadding + groupWidth + groupGap, hintY, groupWidth, hintHeight, true);
+    renderer.setOrientation(origOrientation);
+    return;
+  }
 
   const bool backDisabled = (btn1 == nullptr || btn1[0] == '\0');
   const int leftGroupX = sidePadding;

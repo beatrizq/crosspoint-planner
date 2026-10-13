@@ -29,23 +29,6 @@ void Activity::setResult(ActivityResult&& result) { this->result = std::move(res
 
 void Activity::finish() { activityManager.popActivity(); }
 
-Activity::ListTouchResult Activity::handleListTouch(int& selectedIndex, const int itemCount, const int listTop,
-                                                    const int listHeight, const bool hasSubtitle) {
-  int touched = -1;
-  if (mappedInput.wasListItemTouchedDown(touched, itemCount, selectedIndex, listTop, listHeight, hasSubtitle)) {
-    if (selectedIndex != touched) {
-      selectedIndex = touched;
-      requestUpdate();
-    }
-    return ListTouchResult::Consumed;
-  }
-  if (mappedInput.wasListItemTapped(touched, itemCount, selectedIndex, listTop, listHeight, hasSubtitle)) {
-    selectedIndex = touched;
-    return ListTouchResult::Activated;
-  }
-  return ListTouchResult::None;
-}
-
 void Activity::editSettingsText(const char* title, char* field, const size_t fieldSize) {
   if (field == nullptr || fieldSize == 0) return;
   // maxLength is the field minus its terminator; KeyboardEntryActivity counts

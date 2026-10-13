@@ -13,6 +13,7 @@
 
 #include "GfxRenderer.h"
 #include "MappedInputManager.h"
+#include "ResumeScreen.h"
 #include "activities/network/FileTransferReturn.h"
 #include "util/HomeAppOrder.h"
 #include "util/ScreenshotInfo.h"
@@ -25,7 +26,7 @@ enum class HomeMenuItem {
   NONE,
   READ_MENU,
   FILE_BROWSER,
-  RECENTS,
+  LIBRARY,
   TASKS,
   CALENDAR,
   OPDS_BROWSER,
@@ -112,9 +113,10 @@ class ActivityManager {
   // instead of Home -- set only by ReadMenuActivity itself, since every other
   // caller of these four still expects Back to land on Home as before.
   void goToFileTransfer(FileTransferReturn returnTo = FileTransferReturn::Home);
+  void goToUsbDrive();
   void goToSettings();
   void goToFileBrowser(std::string path = {}, bool returnToReadMenu = false);
-  void goToRecentBooks(bool returnToReadMenu = false);
+  void goToLibrary(bool returnToReadMenu = false);
   // initialTab is an index into the target screen's tab bar; the header cannot
   // name those types without pulling the activities in. Out-of-range values are
   // clamped to the first tab by PlannerScreenActivity::onEnter().
@@ -142,7 +144,7 @@ class ActivityManager {
   void goToBoot();
   void goToFullScreenMessage(std::string message, EpdFontFamily::Style style = EpdFontFamily::REGULAR);
   void goToCrashReport();
-  void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE);
+  void goHome(HomeMenuItem initialMenuItem = HomeMenuItem::NONE, bool cleanInitialRefresh = false);
   // Opens the companion screen (QuickPickActivity, the main screen's "Planner"
   // tile) fresh -- also goToApp()'s AppId::Companion case.
   void goToCompanion();
@@ -160,8 +162,12 @@ class ActivityManager {
   void popActivity();
 
   bool preventAutoSleep() const;
+  bool requiresExclusiveStorageLoop() const;
   bool isReaderActivity() const;
   bool isQuickPickActivity() const;
+  // The screen at the bottom of the stack (what a Quick Resume wake reopens) and its argument.
+  ResumeScreen rootResumeScreen(std::string& arg) const;
+  void goToResumeScreen(ResumeScreen screen, const std::string& arg);
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

@@ -431,8 +431,11 @@ void PlannerScreenActivity::render(RenderLock&&) {
     const int rowPad = rowPadding();
     const int perPage = pageItems();
     const int pageStart = selectedRow() < 0 ? 0 : (selectedRow() / perPage) * perPage;
-    const int textX = metrics.contentSidePadding;
-    const int textWidth = pageWidth - metrics.contentSidePadding * 2;
+    // Row text starts where the title and the first tab's label do: the content edge plus the 8px
+    // inset inside a selection/tab pill.
+    constexpr int ROW_TEXT_INSET = 8;
+    const int textX = metrics.contentSidePadding + ROW_TEXT_INSET;
+    const int textWidth = pageWidth - textX - metrics.contentSidePadding - ROW_TEXT_INSET;
 
     for (int row = 0; row < perPage; row++) {
       const int index = pageStart + row;

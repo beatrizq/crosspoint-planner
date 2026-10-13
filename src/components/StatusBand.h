@@ -12,7 +12,9 @@ class GfxRenderer;
  * row), then today's calendar events, then the newest pending BLE alert -- in that
  * order, each part present only when there is something to show. Used by the
  * main menu, the Read menu, Recent Books, the File Browser, Settings and the
- * Planner, so they all read the same way; it is never part of the reader itself.
+ * Planner; it is never part of the reader itself. Only the Planner screen turns the
+ * events and the alert on (setShowCalendar / setShowAlert); everywhere else the band
+ * is just the status bar.
  *
  * Every part is a focus stop on the screen that hosts it:
  *   - StatusBar: Right2 is Sync All and Right1 is Home (or whatever that screen
@@ -37,6 +39,7 @@ class StatusBand {
     std::string title;
     std::string time;  // ", HH:MM" (pre-formatted, own leading separator), or empty.
     bool isFallback = false;
+    bool isNone = false;  // the "No events" line: synced, but nothing left today
   };
   static std::vector<EventRow> todaysEvents(bool includeSyncHint);
 
@@ -118,8 +121,9 @@ class StatusBand {
  private:
   bool includeSyncHint = false;
   bool enabled = true;
-  bool showCalendar = true;
-  bool showAlert = true;
+  // Off unless the host asks: only the Planner screen shows today's events and the newest alert.
+  bool showCalendar = false;
+  bool showAlert = false;
   // What the last draw (or poll) found on screen.
   mutable int eventRowCount = 0;
   mutable size_t alertCount = 0;

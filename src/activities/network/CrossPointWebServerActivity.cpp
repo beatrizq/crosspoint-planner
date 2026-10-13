@@ -2,6 +2,7 @@
 
 #include <DNSServer.h>
 #include <ESPmDNS.h>
+#include <FontCacheManager.h>
 #include <GfxRenderer.h>
 #include <I18n.h>
 #include <WiFi.h>
@@ -66,6 +67,16 @@ void CrossPointWebServerActivity::onEnter() {
 
   LOG_DBG("WEBACT", "Free heap at onEnter: %d bytes", ESP.getFreeHeap());
 
+  // Heap-critical transition: WiFi (~45KB) plus the web server have to fit in
+  // what's left of the ~380KB parts. SD-font caches retained for the CJK UI
+  // fallback (mini glyph/kern arenas, kern class tables) are rebuildable on
+  // demand — release them up front instead of aborting in startWebServer()
+  // when the heap comes up short (observed on X3 with a Korean SD font).
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    fcm->releaseSdFontCaches();
+    LOG_DBG("WEBACT", "Free heap after SD font cache release: %d bytes", ESP.getFreeHeap());
+  }
+
   // Reset state
   state = WebServerActivityState::MODE_SELECTION;
   networkMode = NetworkMode::JOIN_NETWORK;
@@ -91,9 +102,6 @@ void CrossPointWebServerActivity::exitActivity() {
   switch (returnTo) {
     case FileTransferReturn::ReadMenu:
       activityManager.goToReadMenu();
-      break;
-    case FileTransferReturn::Settings:
-      activityManager.goToSettings();
       break;
     case FileTransferReturn::Home:
       onGoHome();
@@ -130,8 +138,19 @@ void CrossPointWebServerActivity::onNetworkModeSelected(const NetworkMode mode) 
     modeName = "Connect to Calibre";
   } else if (mode == NetworkMode::CREATE_HOTSPOT) {
     modeName = "Create Hotspot";
+#if FREEINK_CAP_USB_MSC
+  } else if (mode == NetworkMode::USB_DRIVE) {
+    modeName = "USB Drive";
+#endif
   }
   LOG_DBG("WEBACT", "Network mode selected: %s", modeName);
+
+#if FREEINK_CAP_USB_MSC
+  if (mode == NetworkMode::USB_DRIVE) {
+    activityManager.goToUsbDrive();
+    return;
+  }
+#endif
 
   networkMode = mode;
   isApMode = (mode == NetworkMode::CREATE_HOTSPOT);
@@ -268,8 +287,17 @@ void CrossPointWebServerActivity::startAccessPoint() {
 void CrossPointWebServerActivity::startWebServer() {
   LOG_DBG("WEBACT", "Starting web server...");
 
+  // Repeat the release right before the allocation: the WiFi selection screen
+  // rendered since onEnter(), and a CJK SSID repopulates the SD-font caches.
+  if (auto* fcm = renderer.getFontCacheManager()) {
+    LOG_DBG("WEBACT", "Free heap before SD font cache release: %d bytes", ESP.getFreeHeap());
+    fcm->releaseSdFontCaches();
+    LOG_DBG("WEBACT", "Free heap before server alloc: %d bytes", ESP.getFreeHeap());
+  }
+
   // Create the web server instance
   webServer.reset(new CrossPointWebServer());
+  webServer->setAbortCheck(&CrossPointWebServerActivity::pollExit, this);
   webServer->begin();
 
   if (webServer->isRunning()) {
@@ -288,9 +316,24 @@ void CrossPointWebServerActivity::startWebServer() {
   }
 }
 
+bool CrossPointWebServerActivity::pollExit(void* ctx) {
+  auto* self = static_cast<CrossPointWebServerActivity*>(ctx);
+  // A release is seen once; latch it so loop() can still act on it after the request returns.
+  self->mappedInput.update(true);
+  if (self->mappedInput.wasReleased(MappedInputManager::Button::Right1) || self->mappedInput.wasHomeGesture()) {
+    self->exitRequested = true;
+  }
+  return self->exitRequested;
+}
+
 void CrossPointWebServerActivity::loop() {
   // Handle different states
   if (state == WebServerActivityState::SERVER_RUNNING) {
+    if (exitRequested) {
+      exitActivity();
+      return;
+    }
+
     // Handle DNS requests for captive portal (AP mode only)
     if (isApMode && dnsServer) {
       dnsServer->processNextRequest();
@@ -331,6 +374,11 @@ void CrossPointWebServerActivity::loop() {
           if (rssi < -75) {
             LOG_DBG("WEBACT", "Warning: Weak WiFi signal: %d dBm", rssi);
           }
+          const bool weak = weakSignal ? rssi < -77 : rssi < -80;
+          if (weak != weakSignal) {
+            weakSignal = weak;
+            repaint = true;
+          }
           const int bars = barsForRssi(rssi, lastWifiBars);
           if (bars != lastWifiBars) {
             lastWifiBars = bars;
@@ -358,6 +406,10 @@ void CrossPointWebServerActivity::loop() {
       constexpr int MAX_ITERATIONS = 500;
       for (int i = 0; i < MAX_ITERATIONS && webServer->isRunning(); i++) {
         webServer->handleClient();
+        if (exitRequested) {
+          exitActivity();
+          return;
+        }
         // Reset watchdog every 32 iterations
         if ((i & 0x1F) == 0x1F) {
           resetTaskWatchdogIfSubscribed();
@@ -365,11 +417,11 @@ void CrossPointWebServerActivity::loop() {
         // Yield and check for exit button every 64 iterations
         if ((i & 0x3F) == 0x3F) {
           yield();
-          // Force trigger an update of which buttons are being pressed so be have accurate state
-          // for back button checking
-          mappedInput.update();
-          // Check for exit button inside loop for responsiveness
-          if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) {
+          // Pump input inside this blocking loop so exit events remain responsive.
+          mappedInput.update(true);
+          // Exit on the Back *release* (and the Home gesture): acting on the press would open the
+          // screen we return to with Back still held, and its release would land there as a second Back.
+          if (mappedInput.wasReleased(MappedInputManager::Button::Right1) || mappedInput.wasHomeGesture()) {
             exitActivity();
             return;
           }
@@ -378,8 +430,8 @@ void CrossPointWebServerActivity::loop() {
       lastHandleClientTime = millis();
     }
 
-    // Handle exit on Back button (also check outside loop)
-    if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) {
+    // Also check outside the request-processing loop.
+    if (mappedInput.wasReleased(MappedInputManager::Button::Right1) || mappedInput.wasHomeGesture()) {
       exitActivity();
       return;
     }
@@ -484,6 +536,10 @@ void CrossPointWebServerActivity::renderServerRunning() const {
     // Also show hostname URL
     std::string hostnameUrl = std::string(tr(STR_OR_HTTP_PREFIX)) + AP_HOSTNAME + ".local/";
     renderer.drawCenteredText(SMALL_FONT_ID, startY, hostnameUrl.c_str(), true);
+    if (weakSignal) {
+      startY += renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing;
+      renderer.drawCenteredText(SMALL_FONT_ID, startY, tr(STR_WEAK_SIGNAL_HINT), true, EpdFontFamily::BOLD);
+    }
   }
 
   const auto labels =

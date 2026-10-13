@@ -15,7 +15,7 @@
 namespace {
 // clockUtcOffsetQ is biased by 48 so it fits in a uint8_t (48 == UTC+0).
 int32_t signedUtcOffsetQuarterHours() {
-  uint8_t biased = SETTINGS.clockUtcOffsetQ;
+  uint8_t biased = halClock.utcOffsetQuarterHoursBiased();
   if (biased > 104) biased = 104;  // guard a corrupted persisted value
   return static_cast<int32_t>(biased) - 48;
 }

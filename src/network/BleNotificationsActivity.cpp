@@ -261,7 +261,7 @@ void BleNotificationsActivity::render(RenderLock&&) {
       const BleNotificationEntry& e = BLE_NOTIFICATIONS.getEntry(static_cast<size_t>(index));
 
       char timeBuf[16] = "";
-      HalClock::formatHourMinute(timeBuf, sizeof(timeBuf), e.hour, e.minute, SETTINGS.clockUtcOffsetQ,
+      HalClock::formatHourMinute(timeBuf, sizeof(timeBuf), e.hour, e.minute, halClock.utcOffsetQuarterHoursBiased(),
                                  SETTINGS.clockFormat == 1);
       const int timeWidth = renderer.getTextWidth(titleFont, timeBuf);
       constexpr int TIME_GAP = 10;

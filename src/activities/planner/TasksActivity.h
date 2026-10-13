@@ -50,7 +50,7 @@ class TasksActivity final : public PlannerScreenActivity {
   // what the filter returned, so the two are mapped through `visibleTabs`.
   // See TaskTabModel.h -- shared with QuickPickActivity's own embedded tab
   // bar.
-  using TabKind = taskTabModel::TaskTabKind;
+  using TabKind = taskTabModel::TaskTab;
 
   // selectTaskId, when non-empty, jumps straight to that task on first paint:
   // whichever tab it falls in, at its own row, rather than wherever
@@ -60,6 +60,7 @@ class TasksActivity final : public PlannerScreenActivity {
                          std::string selectTaskId = "")
       : PlannerScreenActivity("Tasks", renderer, mappedInput, initialTab), selectTaskId(std::move(selectTaskId)) {}
 
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Tasks; }
   void onEnter() override;
 
  protected:
@@ -74,10 +75,9 @@ class TasksActivity final : public PlannerScreenActivity {
   const char* syncingMessage() const override;
   void startSync() override;
 
-  // The due date goes on a second line wherever it tells two rows apart. Not on
-  // Today, where every row is due today and the line would repeat the tab's own
-  // name, and not on No date, where there is no date to draw, and not on Logs,
-  // whose second line is the Cached/Synced tag instead (see drawRow()).
+  // Every row has a second line: the due date ("Overdue", "Today" or the date;
+  // empty for an undated task), or on Logs the Cached/Synced tag instead (see
+  // drawRow()).
   bool rowsHaveSubtitle() const override;
   const char* rowConfirmLabel() const override;
   void onRowConfirm() override;
@@ -86,14 +86,14 @@ class TasksActivity final : public PlannerScreenActivity {
 
  private:
   // The kind on screen at `index`, or ALL when the index is out of range.
-  TabKind kindAt(int index) const;
+  const TabKind& kindAt(int index) const;
   // The kind the active tab holds.
-  TabKind currentKind() const { return kindAt(tab()); }
+  const TabKind& currentKind() const { return kindAt(tab()); }
 
   // Thin delegations to TaskTabModel (shared with QuickPickActivity's own
   // embedded tab bar -- see TaskTabModel.h).
-  bool matchesKind(TabKind kind, size_t cacheIndex) const { return taskTabModel::matchesKind(kind, cacheIndex); }
-  int countFor(TabKind kind) const { return taskTabModel::countFor(kind); }
+  bool matchesKind(const TabKind& kind, size_t cacheIndex) const { return taskTabModel::matchesTab(kind, cacheIndex); }
+  int countFor(const TabKind& kind) const { return taskTabModel::countFor(kind); }
 
   // Recomputes which tabs have rows, keeping the active *kind* selected where it
   // survives and falling back to the first tab where it does not. Also clamps the selection
@@ -139,7 +139,7 @@ class TasksActivity final : public PlannerScreenActivity {
   // never empty once rebuildTabs() has run; until then this placeholder is
   // OVERDUE, first in tab order, so "stay on the current tab" resolves to
   // index 0 on that first rebuild whether or not Overdue currently exists.
-  std::vector<TabKind> visibleTabs{TabKind::OVERDUE};
+  std::vector<TabKind> visibleTabs{TabKind{}};
 
   // See the constructor comment. Consumed and cleared in onEnter().
   std::string selectTaskId;

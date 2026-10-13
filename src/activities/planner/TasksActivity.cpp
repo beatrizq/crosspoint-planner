@@ -77,7 +77,7 @@ void TasksActivity::onEnter() {
 
 const char* TasksActivity::screenTitle() const { return homeAppOrder::displayName(homeAppOrder::AppId::Tasks); }
 
-TasksActivity::TabKind TasksActivity::kindAt(const int index) const {
+const TasksActivity::TabKind& TasksActivity::kindAt(const int index) const {
   if (index < 0 || static_cast<size_t>(index) >= visibleTabs.size()) return visibleTabs.front();
   return visibleTabs[static_cast<size_t>(index)];
 }
@@ -106,7 +106,7 @@ void TasksActivity::rebuildTabs() {
 int TasksActivity::rowCount() const { return countFor(currentKind()); }
 
 void TasksActivity::drawRow(const RowLayout& layout) const {
-  if (currentKind() == TabKind::LOGS) {
+  if (currentKind().isLogs()) {
     const int entryIndex = logEntryIndexForRow(layout.index);
     if (entryIndex < 0) return;
     const auto& entry = TODOIST_TASKS.getCompletedTodayEntries()[static_cast<size_t>(entryIndex)];
@@ -128,13 +128,13 @@ void TasksActivity::drawRow(const RowLayout& layout) const {
   renderer.drawText(layout.titleFont, layout.x, layout.textY, shown.c_str(), layout.ink);
 
   if (!rowsHaveSubtitle()) return;
-  // The due date under the task, as the Calendar screen dates an event - same
-  // format, because a date reads the same wherever it appears on these screens.
-  // Undated tasks draw nothing rather than "--": the row keeps its height, so the
-  // list stays even, and an empty line says "no date" more quietly than a dash.
-  if (task.dueDays == todoist::DUE_NONE) return;
+  // The due date under the task: "Overdue", "Today" or the date, in the format the
+  // Calendar screen dates an event with. Undated tasks draw nothing rather than
+  // "--": the row keeps its height, so the list stays even, and an empty line says
+  // "no date" more quietly than a dash.
   char when[16];
-  planner::formatDayLabel(task.dueDays, when, sizeof(when));
+  taskTabModel::dueLabel(task, when, sizeof(when));
+  if (when[0] == '\0') return;
   const auto shownWhen = renderer.truncatedText(layout.subtitleFont, when, layout.width);
   const int whenY = layout.textY + renderer.getLineHeight(layout.titleFont);
   renderer.drawText(layout.subtitleFont, layout.x, whenY, shownWhen.c_str(), layout.ink);
@@ -157,11 +157,10 @@ void TasksActivity::formatStatus(char* out, const size_t outSize) const {
 }
 
 const char* TasksActivity::emptyMessage() const {
-  if (currentKind() == TabKind::LOGS) return tr(STR_LOG_EMPTY);
+  if (currentKind().isLogs()) return tr(STR_LOG_EMPTY);
   if (!TODOIST_TASKS.hasSynced()) return tr(STR_TODOIST_NEVER_SYNCED);
-  // Reached on All, since every other tab is hidden when it has no rows. An empty
-  // All after a successful sync means the filter matched nothing, which is a
-  // different problem from having no tasks - and the one the user can act on.
+  // An empty list after a successful sync means the filter matched nothing, which
+  // is a different problem from having no tasks - and the one the user can act on.
   return TODOIST_TASKS.getTasks().empty() ? tr(STR_TODOIST_FILTER_NO_MATCH) : tr(STR_TODOIST_NO_TASKS);
 }
 
@@ -172,7 +171,7 @@ const char* TasksActivity::syncingMessage() const { return tr(STR_TODOIST_SYNCIN
 bool TasksActivity::rowsHaveSubtitle() const { return taskTabModel::rowsHaveSubtitle(currentKind()); }
 
 const char* TasksActivity::rowConfirmLabel() const {
-  if (currentKind() == TabKind::LOGS) {
+  if (currentKind().isLogs()) {
     const int entryIndex = logEntryIndexForRow(selectedRow());
     if (entryIndex < 0) return "";
     return TODOIST_TASKS.getCompletedTodayEntries()[static_cast<size_t>(entryIndex)].pending ? tr(STR_CLEAR_BUTTON)
@@ -182,7 +181,7 @@ const char* TasksActivity::rowConfirmLabel() const {
 }
 
 void TasksActivity::onRowConfirm() {
-  if (currentKind() == TabKind::LOGS) {
+  if (currentKind().isLogs()) {
     clearSelectedLogRow();
     return;
   }

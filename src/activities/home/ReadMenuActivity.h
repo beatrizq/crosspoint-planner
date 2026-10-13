@@ -23,6 +23,7 @@ class ReadMenuActivity final : public Activity {
   explicit ReadMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("ReadMenu", renderer, mappedInput) {}
 
+  ResumeScreen resumeScreen() const override { return ResumeScreen::ReadMenu; }
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;

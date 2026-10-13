@@ -2,6 +2,7 @@
 
 #include <FsHelpers.h>
 #include <HalStorage.h>
+#include <LibraryBuilder.h>
 #include <Logging.h>
 
 #include "util/BookCacheUtils.h"
@@ -9,6 +10,13 @@
 
 namespace {
 constexpr const char* HIDDEN_ITEMS[] = {"System Volume Information", "XTCache"};
+
+// Formats the library index tracks (LibraryIndex isBookName). Adding, moving or removing one leaves
+// the index out of date, as the web upload handlers already account for.
+bool isLibraryBookFile(const String& path) {
+  return FsHelpers::checkFileExtension(path, ".epub") || FsHelpers::checkFileExtension(path, ".txt") ||
+         FsHelpers::checkFileExtension(path, ".md") || FsHelpers::checkFileExtension(path, ".xtc");
+}
 
 // RFC 1123 date format helper: "Sun, 06 Nov 1994 08:49:37 GMT"
 // ESP32 doesn't have real-time clock set by default, so we use a fixed epoch date
@@ -386,6 +394,7 @@ void WebDAVHandler::handlePut(WebServer& s) {
   }
 
   clearBookCache(path.c_str());
+  if (isLibraryBookFile(path)) library::markLibraryIndexDirty();
   s.send(_putExisted ? 204 : 201);
   LOG_DBG("DAV", "PUT complete: %s", path.c_str());
 }
@@ -436,6 +445,7 @@ void WebDAVHandler::handleDelete(WebServer& s) {
     file.close();
     clearBookCache(path.c_str());
     if (Storage.remove(path.c_str())) {
+      if (isLibraryBookFile(path)) library::markLibraryIndexDirty();
       s.send(204);
     } else {
       s.send(500, "text/plain", "Failed to delete file");
@@ -544,10 +554,13 @@ void WebDAVHandler::handleMove(WebServer& s) {
   }
 
   clearBookCache(srcPath.c_str());
+  const bool wasDirectory = file.isDirectory();
   bool success = file.rename(dstPath.c_str());
   file.close();
 
   if (success) {
+    // A moved folder can carry books with it.
+    if (wasDirectory || isLibraryBookFile(srcPath) || isLibraryBookFile(dstPath)) library::markLibraryIndexDirty();
     s.send(dstExists ? 204 : 201);
   } else {
     s.send(500, "text/plain", "Move failed");
@@ -642,6 +655,7 @@ void WebDAVHandler::handleCopy(WebServer& s) {
   dstFile.close();
 
   if (copyOk) {
+    if (isLibraryBookFile(dstPath)) library::markLibraryIndexDirty();
     s.send(dstExists ? 204 : 201);
   } else {
     Storage.remove(dstPath.c_str());
@@ -798,7 +812,7 @@ bool WebDAVHandler::getOverwrite(WebServer& s) const {
   return true;  // Default is T
 }
 
-String WebDAVHandler::getMimeType(const String& path) const {
+String WebDAVHandler::getMimeType(const String& path) {
   if (FsHelpers::hasEpubExtension(path)) return "application/epub+zip";
   if (FsHelpers::checkFileExtension(path, ".pdf")) return "application/pdf";
   if (FsHelpers::hasTxtExtension(path)) return "text/plain";

@@ -51,6 +51,13 @@ class CrossPointWebServer {
   CrossPointWebServer();
   ~CrossPointWebServer();
 
+  // Polled while a long response is built; returning true abandons it so the owner can leave.
+  using AbortCheck = bool (*)(void* ctx);
+  void setAbortCheck(AbortCheck fn, void* ctx) {
+    abortCheck = fn;
+    abortCtx = ctx;
+  }
+
   // Start the web server (call after WiFi is connected)
   void begin();
 
@@ -72,7 +79,6 @@ class CrossPointWebServer {
   std::unique_ptr<WebServer> server = nullptr;
   std::unique_ptr<WebSocketsServer> wsServer = nullptr;
   bool running = false;
-  bool watchdogTaskRegistered = false;
   bool apMode = false;  // true when running in AP mode, false for STA mode
   uint16_t port = 80;
   uint16_t wsPort = 81;  // WebSocket port
@@ -84,8 +90,11 @@ class CrossPointWebServer {
   static void wsEventCallback(uint8_t num, WStype_t type, uint8_t* payload, size_t length);
   void abortWsUpload(const char* tag);
 
-  // File scanning
-  void scanFiles(const char* path, const std::function<void(FileInfo)>& callback) const;
+  AbortCheck abortCheck = nullptr;
+  void* abortCtx = nullptr;
+
+  // File scanning; the callback returns false to stop the scan early
+  void scanFiles(const char* path, const std::function<bool(FileInfo)>& callback) const;
   String formatFileSize(size_t bytes) const;
   bool isEpubFile(const String& filename) const;
 

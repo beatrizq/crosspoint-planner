@@ -19,6 +19,7 @@
 #include "activities/planner/PlannerLabels.h"
 #include "components/UITheme.h"
 #include "components/icons/bell80.h"
+#include "components/icons/blocks.h"
 #include "components/icons/book.h"
 #include "components/icons/book24.h"
 #include "components/icons/bookmark.h"
@@ -166,12 +167,16 @@ const uint8_t* iconForName(UIIcon icon, int size) {
         return TasksIcon;
       case UIIcon::Calendar:
         return CalendarIcon;
+      case UIIcon::Blocks:
+        return BlocksIcon;
       default:
         return nullptr;
     }
   }
   return nullptr;
 }
+
+const uint8_t* iconForName(UIIcon icon) { return iconForName(icon, mainMenuIconSize); }
 }  // namespace
 
 void LyraTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t percentage) const {
@@ -204,8 +209,8 @@ void LyraTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t
   }
 }
 
-void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
-                           const bool showRule, const bool includeStatusRow) const {
+void LyraTheme::drawLegacyHeader(const GfxRenderer& renderer, Rect rect, const char* title, const char* subtitle,
+                                 const bool showRule, const bool includeStatusRow) const {
   renderer.fillRect(rect.x, rect.y, rect.width, rect.height, false);
 
   // A second, embedded header drawn mid-screen (QuickPickActivity's own
@@ -249,7 +254,7 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     // reading), so this row reads as the same family across every screen that
     // calls drawHeader(), not just the companion screen.
     char timeBuf[9];
-    if (halClock.formatTime(timeBuf, sizeof(timeBuf), SETTINGS.clockUtcOffsetQ, SETTINGS.clockFormat == 1)) {
+    if (halClock.formatTime(timeBuf, sizeof(timeBuf), SETTINGS.clockFormat == 1)) {
       char headerClock[32];
       strlcpy(headerClock, timeBuf, sizeof(headerClock));
 
@@ -297,8 +302,9 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
     // title sits near the top of `rect` instead of leaving that space blank.
     const int titleY = includeStatusRow ? rect.y + LyraMetrics::values.batteryBarHeight + 3 : rect.y + 3;
     auto truncatedTitle = renderer.truncatedText(UI_12_FONT_ID, title, maxTitleWidth, EpdFontFamily::BOLD);
-    renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding, titleY, truncatedTitle.c_str(),
-                      true, EpdFontFamily::BOLD);
+    // Starts where the tab labels and the row text do (the 8px inset inside their pills/selection).
+    renderer.drawText(UI_12_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection, titleY,
+                      truncatedTitle.c_str(), true, EpdFontFamily::BOLD);
     if (showRule) {
       renderer.drawLine(rect.x, rect.y + rect.height - 3, rect.x + rect.width - 1, rect.y + rect.height - 3, 3, true);
     }
@@ -318,20 +324,22 @@ void LyraTheme::drawHeader(const GfxRenderer& renderer, Rect rect, const char* t
 }
 
 void LyraTheme::drawSubHeader(const GfxRenderer& renderer, Rect rect, const char* label, const char* rightLabel) const {
-  int currentX = rect.x + LyraMetrics::values.contentSidePadding;
-  int rightSpace = LyraMetrics::values.contentSidePadding;
+  const int contentWidth = std::max(0, rect.width - LyraMetrics::values.contentSidePadding * 2);
+
+  int labelWidth = contentWidth;
   if (rightLabel) {
-    auto truncatedRightLabel =
-        renderer.truncatedText(SMALL_FONT_ID, rightLabel, maxListValueWidth, EpdFontFamily::REGULAR);
-    int rightLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedRightLabel.c_str());
+    auto truncatedRightLabel = renderer.truncatedText(SMALL_FONT_ID, rightLabel, contentWidth, EpdFontFamily::REGULAR);
+    const int rightLabelWidth = renderer.getTextWidth(SMALL_FONT_ID, truncatedRightLabel.c_str());
     renderer.drawText(SMALL_FONT_ID, rect.x + rect.width - LyraMetrics::values.contentSidePadding - rightLabelWidth,
                       rect.y + 7, truncatedRightLabel.c_str());
-    rightSpace += rightLabelWidth + hPaddingInSelection;
+    labelWidth = std::max(0, contentWidth - rightLabelWidth - hPaddingInSelection);
   }
 
-  auto truncatedLabel = renderer.truncatedText(
-      UI_10_FONT_ID, label, rect.width - LyraMetrics::values.contentSidePadding - rightSpace, EpdFontFamily::REGULAR);
-  renderer.drawText(UI_10_FONT_ID, currentX, rect.y + 6, truncatedLabel.c_str(), true, EpdFontFamily::REGULAR);
+  if (labelWidth > 0) {
+    auto truncatedLabel = renderer.truncatedText(UI_10_FONT_ID, label, labelWidth, EpdFontFamily::REGULAR);
+    renderer.drawText(UI_10_FONT_ID, rect.x + LyraMetrics::values.contentSidePadding + hPaddingInSelection, rect.y + 6,
+                      truncatedLabel.c_str(), true, EpdFontFamily::REGULAR);
+  }
 
   renderer.drawLine(rect.x, rect.y + rect.height - 1, rect.x + rect.width - 1, rect.y + rect.height - 1, true);
 }
@@ -387,19 +395,16 @@ void LyraTheme::drawTabBar(const GfxRenderer& renderer, Rect rect, const std::ve
     const int textWidth = renderer.getTextWidth(UI_10_FONT_ID, tab.label, EpdFontFamily::REGULAR);
 
     if (tab.selected) {
-      // The selected tab is the same rounded pill either way. With the bar
-      // focused it is solid black; with focus elsewhere it keeps that shape as
-      // just a border, the bar's own grey background showing through inside.
-      // 2px clear above and below the pill, between it and the lines that
-      // bound the bar (the rule above it, drawLine() below): the pill spans
-      // rows 2..height-4, the bar's own bottom line sits on row height-1.
-      const int pillY = rect.y + 2;
-      const int pillWidth = textWidth + 2 * hPaddingInSelection;
-      const int pillHeight = rect.height - 5;
+      // With the bar focused the selected tab is a solid black rounded pill (white label). With
+      // focus elsewhere -- the tab's content still showing below -- it is just its label, underlined.
+      // The pill spans rows 2..height-4, clear of the bar's own bottom line on row height-1.
       if (selected) {
-        renderer.fillRoundedRect(currentX, pillY, pillWidth, pillHeight, cornerRadius, Color::Black);
+        renderer.fillRoundedRect(currentX, rect.y + 2, textWidth + 2 * hPaddingInSelection, rect.height - 5,
+                                 cornerRadius, Color::Black);
       } else {
-        renderer.drawRoundedRect(currentX, pillY, pillWidth, pillHeight, selectionLineWidth, cornerRadius, true);
+        const int underlineY =
+            std::min(rect.y + 6 + renderer.getLineHeight(UI_10_FONT_ID) - 2, rect.y + rect.height - 5);
+        renderer.fillRect(currentX + hPaddingInSelection, underlineY, textWidth, selectionLineWidth);
       }
     }
 
@@ -601,26 +606,30 @@ void LyraTheme::drawButtonHints(GfxRenderer& renderer, const char* btn1, const c
   constexpr int buttonHeight = LyraMetrics::values.buttonHintsHeight;
   constexpr int buttonY = LyraMetrics::values.buttonHintsHeight;  // Distance from bottom
   constexpr int textYOffset = 7;                                  // Distance from top of button to text baseline
-  // X3 has wider screen in portrait (528 vs 480), use more spacing
-  constexpr int x4ButtonPositions[] = {58, 146, 254, 342};
-  constexpr int x3ButtonPositions[] = {65, 157, 291, 383};
-  const int* buttonPositions = gpio.deviceIsX3() ? x3ButtonPositions : x4ButtonPositions;
+  // Keyed to the portrait panel width: the 528-wide X3 gets more spacing than
+  // the 480-wide boards (X4, X4 Pro, and the other 800x480 panels).
+  constexpr int narrowButtonPositions[] = {58, 146, 254, 342};
+  constexpr int wideButtonPositions[] = {65, 157, 291, 383};
+  const int* buttonPositions = renderer.getScreenWidth() >= 528 ? wideButtonPositions : narrowButtonPositions;
   const char* labels[] = {btn1, btn2, btn3, btn4};
+  const bool grayscale = renderer.getRenderMode() != GfxRenderer::BW && !renderer.grayPlanesAreAbsolute();
 
   for (int i = 0; i < 4; i++) {
     const int x = buttonPositions[i];
     if (labels[i] != nullptr && labels[i][0] != '\0') {
       // Draw the filled background and border for a FULL-sized button
-      renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius, Color::White);
+      renderer.fillRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, cornerRadius,
+                               grayscale ? Color::Black : Color::White);
+      if (grayscale) continue;
       renderer.drawRoundedRect(x, pageHeight - buttonY, buttonWidth, buttonHeight, 1, cornerRadius, true, true, false,
                                false, true);
-      const int textWidth = renderer.getTextWidth(SMALL_FONT_ID, labels[i]);
-      const int textX = x + (buttonWidth - 1 - textWidth) / 2;
-      renderer.drawText(SMALL_FONT_ID, textX, pageHeight - buttonY + textYOffset, labels[i]);
+      drawHintLabel(renderer, SMALL_FONT_ID, labels[i], x, buttonWidth, pageHeight - buttonY, buttonHeight,
+                    textYOffset);
     } else {
       // Draw the filled background and border for a SMALL-sized button
       renderer.fillRoundedRect(x, pageHeight - smallButtonHeight, buttonWidth, smallButtonHeight, cornerRadius,
-                               Color::White);
+                               grayscale ? Color::Black : Color::White);
+      if (grayscale) continue;
       renderer.drawRoundedRect(x, pageHeight - smallButtonHeight, buttonWidth, smallButtonHeight, 1, cornerRadius, true,
                                true, false, false, true);
     }
@@ -641,7 +650,7 @@ void LyraTheme::drawSideButtonHints(const GfxRenderer& renderer, const char* top
 
   // A selected label is drawn inverted -- white letters on a black fill of the
   // same shape as its border -- so it reads as the current choice.
-  if (gpio.deviceIsX3()) {
+  if (gpio.hasEdgeSideButtons()) {
     // X3 layout: Up on left side, Down on right side, positioned higher --
     // both boxes centred on x3ButtonCenterY (see its own comment above).
 
@@ -706,7 +715,7 @@ int LyraTheme::getSideButtonHintsBottom(const GfxRenderer& renderer, const char*
   // Only the X3 has the two buttons on opposite edges at one shared height, so
   // only there is there a single line the content can sit below. The X4 stacks
   // them one under the other on a single side, far lower down.
-  if (gpio.hasTouch() || !gpio.deviceIsX3()) {
+  if (gpio.hasTouch() || !gpio.hasEdgeSideButtons()) {
     return 0;
   }
   // Neither button has a label, so neither box is drawn and there is no line to
@@ -822,24 +831,56 @@ void LyraTheme::drawRecentBookCover(GfxRenderer& renderer, Rect rect, const std:
     // full-width band with no column competing for it, so there is room for
     // them again.
     const int textX = tileX + hPaddingInSelection + coverWidth + LyraMetrics::values.contentSidePadding;
-    const int textRight = rect.x + rect.width - LyraMetrics::values.contentSidePadding;
+    // Stops short of the selection fill's edge by the same inset the cover sits in from its left edge.
+    const int textRight = rect.x + rect.width - LyraMetrics::values.contentSidePadding - hPaddingInSelection;
     const int textWidth = textRight - textX;
     if (textWidth > 0) {
-      const auto lines = renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, 3);
+      constexpr int barHeight = 12;
+      constexpr int barGap = 10;
+      constexpr int barInset = 2;
+      const bool showBar = SETTINGS.showHeroProgressBar && book.progressPercent >= 0;
+      char percentText[8] = "";
+      if (showBar) snprintf(percentText, sizeof(percentText), "%d%%", book.progressPercent);
+
+      const int titleLineHeight = renderer.getLineHeight(UI_12_FONT_ID);
+      const int authorHeight = book.author.empty() ? 0 : renderer.getLineHeight(UI_10_FONT_ID) * 3 / 2;
+      const int percentWidth = showBar ? renderer.getTextWidth(UI_10_FONT_ID, percentText) : 0;
+      const int barRowHeight = showBar ? std::max(barHeight, renderer.getLineHeight(UI_10_FONT_ID)) : 0;
+      const int barBlockHeight = showBar ? barGap + barRowHeight : 0;
+
+      // As many title lines as fit in the selection box beside the author and bar; the last one
+      // ends in an ellipsis when the title is longer. Measured in the bold it is drawn in.
+      const int boxInnerHeight = rect.height - hPaddingInSelection * 2;
+      const int maxTitleLines = std::clamp((boxInnerHeight - authorHeight - barBlockHeight) / titleLineHeight, 1, 3);
+      const auto lines =
+          renderer.wrappedText(UI_12_FONT_ID, book.title.c_str(), textWidth, maxTitleLines, EpdFontFamily::BOLD);
       const auto truncatedAuthor =
           book.author.empty() ? std::string{} : renderer.truncatedText(UI_10_FONT_ID, book.author.c_str(), textWidth);
 
-      int totalTextHeight = renderer.getLineHeight(UI_12_FONT_ID) * static_cast<int>(lines.size());
-      if (!truncatedAuthor.empty()) totalTextHeight += renderer.getLineHeight(UI_10_FONT_ID) * 3 / 2;
+      const int totalTextHeight = titleLineHeight * static_cast<int>(lines.size()) + authorHeight + barBlockHeight;
       int textY = tileY + hPaddingInSelection + coverYOffset + (drawnCoverHeight - totalTextHeight) / 2;
 
       for (const auto& line : lines) {
         renderer.drawText(UI_12_FONT_ID, textX, textY, line.c_str(), true, EpdFontFamily::BOLD);
-        textY += renderer.getLineHeight(UI_12_FONT_ID);
+        textY += titleLineHeight;
       }
       if (!truncatedAuthor.empty()) {
         textY += renderer.getLineHeight(UI_10_FONT_ID) / 2;
         renderer.drawText(UI_10_FONT_ID, textX, textY, truncatedAuthor.c_str(), true);
+        textY += renderer.getLineHeight(UI_10_FONT_ID);
+      }
+      if (showBar) {
+        // Bar on the left, percentage right-aligned after it, both centred in one row.
+        const int rowY = textY + barGap;
+        const int barWidth = textWidth - percentWidth - barGap;
+        const int barY = rowY + (barRowHeight - barHeight) / 2;
+        renderer.drawText(UI_10_FONT_ID, textX + textWidth - percentWidth,
+                          rowY + (barRowHeight - renderer.getLineHeight(UI_10_FONT_ID)) / 2, percentText, true);
+        renderer.drawRect(textX, barY, barWidth, barHeight, true);
+        const int fillWidth = (barWidth - barInset * 2) * std::clamp(book.progressPercent, 0, 100) / 100;
+        if (fillWidth > 0) {
+          renderer.fillRect(textX + barInset, barY + barInset, fillWidth, barHeight - barInset * 2, true);
+        }
       }
     }
   } else {

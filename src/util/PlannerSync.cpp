@@ -59,7 +59,7 @@ void collectCompletedItem(void* ctx, const char* id, const char* content) {
  * Today from NTP, in the device's configured timezone.
  *
  * Most boards (X3/X4 included) have no RTC. NTP is the only source that knows
- * SETTINGS.clockUtcOffsetQ, so it is the only one that yields the device's own
+ * halClock.utcOffsetQuarterHoursBiased(), so it is the only one that yields the device's own
  * local date; the response Date header is the fallback, and is GMT.
  */
 bool resolveTodayDate(std::string& outDate) {
@@ -78,7 +78,7 @@ bool resolveTodayDate(std::string& outDate) {
   // Boards that do have an RTC get it set from the same SNTP result.
   if (halClock.isAvailable()) halClock.syncFromNTP();
 
-  uint8_t offsetQ = SETTINGS.clockUtcOffsetQ;
+  uint8_t offsetQ = halClock.utcOffsetQuarterHoursBiased();
   if (offsetQ > 104) offsetQ = 104;  // clamp a corrupt persisted value to UTC+14
   const time_t local = time(nullptr) + (static_cast<int>(offsetQ) - 48) * 15 * 60;
   struct tm timeinfo;
@@ -329,7 +329,7 @@ const char* runCalendar() {
 
 std::string localIsoDateFromUtc(const uint16_t year, const uint8_t month, const uint8_t day, const uint8_t hour,
                                 const uint8_t minute) {
-  uint8_t offsetQ = SETTINGS.clockUtcOffsetQ;
+  uint8_t offsetQ = halClock.utcOffsetQuarterHoursBiased();
   if (offsetQ > 104) offsetQ = 104;  // clamp a corrupt persisted value to UTC+14
   const int32_t utcDays = civil::daysFromCivil(year, month, day);
   const time_t utcEpoch = static_cast<time_t>(utcDays) * 86400 + hour * 3600 + minute * 60;

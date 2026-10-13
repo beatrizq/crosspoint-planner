@@ -1,10 +1,13 @@
 #include "BmpViewerActivity.h"
 
 #include <Bitmap.h>
+#include <Epub/converters/PngToFramebufferConverter.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
+#include <HalDisplay.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Memory.h>
 
 #include <algorithm>
 
@@ -12,6 +15,13 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/PlannerSleepScreen.h"
+
+namespace {
+constexpr char CUSTOM_SLEEP_ROOT_BMP[] = "/sleep.bmp";
+constexpr char TRANSPARENT_SLEEP_ROOT_BMP[] = "/sleep-overlay.bmp";
+constexpr char TRANSPARENT_SLEEP_ROOT_PNG[] = "/sleep-overlay.png";
+constexpr size_t COPY_BUFFER_SIZE = 2048;
+}  // namespace
 
 BmpViewerActivity::BmpViewerActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string path)
     : Activity("BmpViewer", renderer, mappedInput), filePath(std::move(path)) {}
@@ -38,7 +48,7 @@ void BmpViewerActivity::loadSiblingImages() {
       file.getName(name, sizeof(name));
       if (name[0] != '.') {
         std::string fname(name);
-        if (fname.length() >= 4 && fname.substr(fname.length() - 4) == ".bmp") {
+        if (FsHelpers::hasBmpExtension(fname) || FsHelpers::hasPngExtension(fname)) {
           siblingImages.push_back(fname);
         }
       }
@@ -49,12 +59,32 @@ void BmpViewerActivity::loadSiblingImages() {
 
   FsHelpers::sortFileList(siblingImages);
 
-  for (size_t i = 0; i < siblingImages.size(); ++i) {
-    if (siblingImages[i] == fileName) {
-      currentImageIndex = static_cast<int>(i);
-      break;
-    }
+  const auto image = std::find(siblingImages.begin(), siblingImages.end(), fileName);
+  if (image != siblingImages.end()) {
+    currentImageIndex = static_cast<int>(image - siblingImages.begin());
   }
+}
+
+bool BmpViewerActivity::canSetSleepCover() const {
+  return FsHelpers::hasBmpExtension(filePath) ||
+         (SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::TRANSPARENT_CUSTOM &&
+          FsHelpers::hasPngExtension(filePath));
+}
+
+bool BmpViewerActivity::renderPng() {
+  ImageDimensions dimensions;
+  if (!PngToFramebufferConverter::getDimensionsStatic(filePath, dimensions)) return false;
+  if (dimensions.width <= 0 || dimensions.height <= 0) return false;
+
+  const float scale = std::min(static_cast<float>(renderer.getScreenWidth()) / dimensions.width,
+                               static_cast<float>(renderer.getScreenHeight()) / dimensions.height);
+  const int width = std::min(renderer.getScreenWidth(), static_cast<int>(dimensions.width * std::min(scale, 1.0f)));
+  const int height = std::min(renderer.getScreenHeight(), static_cast<int>(dimensions.height * std::min(scale, 1.0f)));
+  RenderConfig config{(renderer.getScreenWidth() - width) / 2, (renderer.getScreenHeight() - height) / 2, width,
+                      height};
+
+  PngToFramebufferConverter converter;
+  return converter.decodeToFramebuffer(filePath, renderer, config);
 }
 
 void BmpViewerActivity::onEnter() {
@@ -64,15 +94,34 @@ void BmpViewerActivity::onEnter() {
     loadSiblingImages();
   }
 
-  HalFile file;
-
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
   Rect popupRect = GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
   GUI.fillPopupProgress(renderer, popupRect, 20);  // Initial 20% progress
-  // 1. Open the file
+  if (FsHelpers::hasPngExtension(filePath)) {
+    renderer.clearScreen();
+    const bool hasPrevious = siblingImages.size() > 1 && currentImageIndex > 0;
+    const bool hasNext = siblingImages.size() > 1 && currentImageIndex != -1 &&
+                         currentImageIndex < static_cast<int>(siblingImages.size()) - 1;
+    const auto labels = mappedInput.mapLabels(tr(STR_BACK), canSetSleepCover() ? tr(STR_SET_SLEEP_COVER) : "",
+                                              hasPrevious ? "<" : "", hasNext ? ">" : "");
+    if (renderPng()) {
+      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+    } else {
+      renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_FILE_OPEN_FAILED));
+      GUI.drawButtonHints(renderer, labels.btn1, "", "", "");
+      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+    }
+    return;
+  }
+
+  HalFile file;
+  // 1. Open the BMP file
   if (Storage.openFileForRead("BMP", filePath, file)) {
-    Bitmap bitmap(file, true);
+    Bitmap bitmap(file, true,
+                  renderer.grayscaleCapabilities(HalDisplay::GrayscaleMode::Absolute).supported() &&
+                      display.getController() == HalDisplay::Controller::SSD1677);
 
     // 2. Parse headers to get dimensions
     if (bitmap.parseHeaders() == BmpReaderError::Ok) {
@@ -102,21 +151,62 @@ void BmpViewerActivity::onEnter() {
       bool hasNext = (siblingImages.size() > 1 && currentImageIndex != -1 &&
                       currentImageIndex < static_cast<int>(siblingImages.size()) - 1);
 
-      const auto labels =
-          mappedInput.mapLabels(tr(STR_BACK), tr(STR_SET_SLEEP_COVER), (hasPrevious ? "<" : ""), (hasNext ? ">" : ""));
+      const auto labels = mappedInput.mapLabels(tr(STR_BACK), canSetSleepCover() ? tr(STR_SET_SLEEP_COVER) : "",
+                                                (hasPrevious ? "<" : ""), (hasNext ? ">" : ""));
 
       GUI.fillPopupProgress(renderer, popupRect, 50);
 
       renderer.clearScreen();
-      // Assuming drawBitmap defaults to 0,0 crop if omitted, or pass explicitly: drawBitmap(bitmap, x, y, pageWidth,
-      // pageHeight, 0, 0)
-      renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0);
+      if (!renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0)) {
+        renderer.clearScreen();
+        renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_FILE_OPEN_FAILED));
+        renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+        return;
+      }
 
       // Draw UI hints on the base layer
       GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
-      // Single pass for non-grayscale images
+      if (bitmap.hasGreyscale()) {
+        const bool absolute = renderer.grayscaleCapabilities(HalDisplay::GrayscaleMode::Absolute).supported();
+        if (absolute && !renderer.displayGrayscaleBase(HalDisplay::GrayscaleMode::Absolute)) return;
+        if (!absolute) renderer.displayGrayscaleBase(HalDisplay::HALF_REFRESH);
+        bool planesReady = true;
+        for (const auto mode : {GfxRenderer::GRAYSCALE_LSB, GfxRenderer::GRAYSCALE_MSB}) {
+          if (bitmap.rewindToData() != BmpReaderError::Ok) {
+            LOG_ERR("BMP", "Failed to rewind bitmap for grayscale rendering");
+            planesReady = false;
+            break;
+          }
+          renderer.clearScreen(absolute ? 0xFF : 0x00);
+          renderer.setRenderMode(mode);
+          if (!renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0)) {
+            planesReady = false;
+            break;
+          }
+          GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+          if (mode == GfxRenderer::GRAYSCALE_LSB) {
+            renderer.copyGrayscaleLsbBuffers();
+          } else {
+            renderer.copyGrayscaleMsbBuffers();
+          }
+        }
+        if (planesReady) renderer.displayGrayBuffer();
 
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+        // Rebuild the BW framebuffer for popups and subsequent differential updates.
+        renderer.setRenderMode(GfxRenderer::BW);
+        renderer.clearScreen();
+        if (bitmap.rewindToData() != BmpReaderError::Ok ||
+            !renderer.drawBitmap(bitmap, x, y, pageWidth, pageHeight, 0, 0)) {
+          LOG_ERR("BMP", "Failed to rewind bitmap to restore the BW framebuffer");
+          renderer.drawCenteredText(UI_10_FONT_ID, pageHeight / 2, tr(STR_FILE_OPEN_FAILED));
+          planesReady = false;
+        }
+        GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+        renderer.cleanupGrayscaleWithFrameBuffer();
+        if (!planesReady) renderer.displayBuffer(HalDisplay::HALF_REFRESH);
+      } else {
+        renderer.displayBuffer(HalDisplay::FAST_REFRESH);
+      }
 
     } else {
       // Handle file parsing error
@@ -147,8 +237,49 @@ void BmpViewerActivity::onExit() {
 void BmpViewerActivity::doSetSleepCover() {
   GUI.drawPopup(renderer, tr(STR_LOADING_POPUP));
 
-  const bool success = plannerSleepScreen::installCustomWallpaper(filePath);
-  GUI.drawPopup(renderer, success ? tr(STR_DONE) : tr(STR_FAILED_LOWER));
+  const bool transparentMode = SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::TRANSPARENT_CUSTOM;
+  if (!canSetSleepCover()) return;
+
+  if (!transparentMode) {
+    // The fork's own wallpaper slot (see PlannerSleepScreen.h), so picking an image here never overwrites
+    // a sleep_custom.bmp the user placed on the card.
+    const bool installed = plannerSleepScreen::installCustomWallpaper(filePath);
+    GUI.drawPopup(renderer, installed ? tr(STR_DONE) : tr(STR_FAILED_LOWER));
+  } else {
+    const char* destination = transparentMode ? (FsHelpers::hasPngExtension(filePath) ? TRANSPARENT_SLEEP_ROOT_PNG
+                                                                                      : TRANSPARENT_SLEEP_ROOT_BMP)
+                                              : CUSTOM_SLEEP_ROOT_BMP;
+    bool success = filePath == destination;
+
+    if (!success) {
+      auto buffer = makeUniqueNoThrow<uint8_t[]>(COPY_BUFFER_SIZE);
+      if (!buffer) {
+        LOG_ERR("BMP", "OOM: sleep cover copy buffer");
+      } else {
+        HalFile inFile, outFile;
+        if (Storage.openFileForRead("BMP", filePath, inFile) && Storage.openFileForWrite("BMP", destination, outFile)) {
+          int bytesRead;
+          success = true;
+          while ((bytesRead = inFile.read(buffer.get(), COPY_BUFFER_SIZE)) > 0) {
+            if (outFile.write(buffer.get(), static_cast<size_t>(bytesRead)) != static_cast<size_t>(bytesRead)) {
+              success = false;
+              break;
+            }
+          }
+          if (bytesRead < 0) success = false;
+          outFile.close();
+        }
+      }
+    }
+
+    if (success) {
+      if (!transparentMode) SETTINGS.sleepScreen = CrossPointSettings::SLEEP_SCREEN_MODE::CUSTOM;
+      SETTINGS.saveToFile();
+      GUI.drawPopup(renderer, tr(STR_DONE));
+    } else {
+      GUI.drawPopup(renderer, tr(STR_FAILED_LOWER));
+    }
+  }
 
   delay(1000);
   onEnter();
@@ -190,7 +321,7 @@ void BmpViewerActivity::loop() {
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
-    doSetSleepCover();
+    if (canSetSleepCover()) doSetSleepCover();
     return;
   }
 

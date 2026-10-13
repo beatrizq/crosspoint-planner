@@ -1,7 +1,15 @@
 #include "TaskTabModel.h"
 
 #include <I18n.h>
+#include <TodoistDate.h>
 #include <TodoistTaskCache.h>
+#include <strings.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+
+#include "PlannerLabels.h"
 
 namespace taskTabModel {
 
@@ -17,44 +25,68 @@ bool inProjectScope(const TodoistTask& task, const uint32_t projectScope) {
   }
   return true;
 }
-}  // namespace
 
-bool matchesKind(const TaskTabKind kind, const size_t cacheIndex, const uint32_t projectScope) {
-  if (kind == TaskTabKind::LOGS) return false;
+constexpr const char* LABEL_SEPARATOR = ", ";
 
-  const auto& tasks = TODOIST_TASKS.getTasks();
-  if (cacheIndex >= tasks.size()) return false;
-  const TodoistTask& task = tasks[cacheIndex];
-  if (!inProjectScope(task, projectScope)) return false;
+// Calls fn(const char* start, size_t length) for each label of a task's joined label string ("a, b").
+template <typename Fn>
+void forEachLabel(const std::string& labels, Fn fn) {
+  size_t pos = 0;
+  while (pos < labels.size()) {
+    const size_t end = labels.find(LABEL_SEPARATOR, pos);
+    const size_t length = (end == std::string::npos ? labels.size() : end) - pos;
+    if (length > 0) fn(labels.c_str() + pos, length);
+    if (end == std::string::npos) break;
+    pos = end + strlen(LABEL_SEPARATOR);
+  }
+}
 
-  // Today, as the last sync settled it. DUE_NONE when nothing has synced or
-  // the date could not be established, which is why the three dated kinds
-  // check it: without today there is no before, on, or after to sort a task
-  // into, and guessing would file it under the wrong one.
-  const uint16_t today = todoist::dueDaysFromIso(TODOIST_TASKS.getSyncDate().c_str());
-  const bool dated = task.dueDays != todoist::DUE_NONE;
-  const bool knowToday = today != todoist::DUE_NONE;
+bool hasLabel(const std::string& labels, const std::string& label) {
+  bool found = false;
+  forEachLabel(labels, [&](const char* start, const size_t length) {
+    if (length == label.size() && strncmp(start, label.c_str(), length) == 0) found = true;
+  });
+  return found;
+}
 
-  switch (kind) {
-    case TaskTabKind::OVERDUE:
-      // The cache owns this flag, against the same date, so the tab agrees
-      // with the overdue count elsewhere by construction.
-      return task.overdue;
-    case TaskTabKind::TODAY:
-      return knowToday && dated && task.dueDays == today;
-    case TaskTabKind::UPCOMING:
-      // Strictly after today, and dated: DUE_NONE is the maximum, so an
-      // undated task would otherwise read as the furthest-future one there
-      // is.
-      return knowToday && dated && task.dueDays > today;
-    case TaskTabKind::NO_DATE:
-      // No date needs no date: this is the one kind that means something
-      // before a sync has worked out what today is.
-      return !dated;
-    case TaskTabKind::LOGS:
+bool taskMatchesTab(const TaskTab& tab, const TodoistTask& task) {
+  switch (tab.type) {
+    case TaskTab::Type::LABEL:
+      return !tab.label.empty() && hasLabel(task.labels, tab.label);
+    case TaskTab::Type::UNLABELLED:
+      return task.labels.empty();
+    case TaskTab::Type::LOGS:
       return false;
   }
   return false;
+}
+
+int compareLabels(const std::string& a, const std::string& b) { return strcasecmp(a.c_str(), b.c_str()); }
+}  // namespace
+
+// A stable insertion sort: at most 60 entries, and it needs no heap.
+int rowsFor(const TaskTab& tab, const uint32_t projectScope, uint8_t* out) {
+  if (tab.isLogs()) return 0;
+  const auto& tasks = TODOIST_TASKS.getTasks();
+  int count = 0;
+  for (size_t i = 0; i < tasks.size() && count < static_cast<int>(TODOIST_MAX_CACHED_TASKS); i++) {
+    if (!inProjectScope(tasks[i], projectScope) || !taskMatchesTab(tab, tasks[i])) continue;
+    const uint16_t due = tasks[i].dueDays;  // DUE_NONE is the largest value, so undated sorts last
+    int at = count;
+    while (at > 0 && tasks[out[at - 1]].dueDays > due) {
+      out[at] = out[at - 1];
+      at--;
+    }
+    out[at] = static_cast<uint8_t>(i);
+    count++;
+  }
+  return count;
+}
+
+bool matchesTab(const TaskTab& tab, const size_t cacheIndex, const uint32_t projectScope) {
+  const auto& tasks = TODOIST_TASKS.getTasks();
+  if (cacheIndex >= tasks.size()) return false;
+  return inProjectScope(tasks[cacheIndex], projectScope) && taskMatchesTab(tab, tasks[cacheIndex]);
 }
 
 int countInProject(const uint32_t projectScope) {
@@ -65,27 +97,22 @@ int countInProject(const uint32_t projectScope) {
   return count;
 }
 
-int countFor(const TaskTabKind kind, const uint32_t projectScope) {
-  if (kind == TaskTabKind::LOGS) return static_cast<int>(TODOIST_TASKS.getCompletedTodayEntries().size());
+int countFor(const TaskTab& tab, const uint32_t projectScope) {
+  if (tab.isLogs()) return static_cast<int>(TODOIST_TASKS.getCompletedTodayEntries().size());
 
   const auto& tasks = TODOIST_TASKS.getTasks();
   int count = 0;
-  for (size_t i = 0; i < tasks.size(); i++) {
-    if (matchesKind(kind, i, projectScope)) count++;
+  for (const auto& task : tasks) {
+    if (inProjectScope(task, projectScope) && taskMatchesTab(tab, task)) count++;
   }
   return count;
 }
 
-int taskCacheIndexForRow(const TaskTabKind kind, const int row, const uint32_t projectScope) {
-  if (row < 0 || kind == TaskTabKind::LOGS) return -1;
-  const auto& tasks = TODOIST_TASKS.getTasks();
-  int seen = 0;
-  for (size_t i = 0; i < tasks.size(); i++) {
-    if (!matchesKind(kind, i, projectScope)) continue;
-    if (seen == row) return static_cast<int>(i);
-    seen++;
-  }
-  return -1;
+int taskCacheIndexForRow(const TaskTab& tab, const int row, const uint32_t projectScope) {
+  if (row < 0 || tab.isLogs()) return -1;
+  uint8_t rows[TODOIST_MAX_CACHED_TASKS];
+  const int count = rowsFor(tab, projectScope, rows);
+  return row < count ? static_cast<int>(rows[row]) : -1;
 }
 
 int logEntryIndexForRow(const int row) {
@@ -93,45 +120,72 @@ int logEntryIndexForRow(const int row) {
   return row;
 }
 
-bool rowsHaveSubtitle(const TaskTabKind kind) { return kind == TaskTabKind::UPCOMING || kind == TaskTabKind::LOGS; }
+bool rowsHaveSubtitle(const TaskTab&) { return true; }
 
-int rebuildVisibleTabs(const TaskTabKind wanted, std::vector<TaskTabKind>& visibleTabs, const uint32_t projectScope,
+void dueLabel(const TodoistTask& task, char* out, const size_t outSize) {
+  if (out == nullptr || outSize == 0) return;
+  out[0] = '\0';
+  if (task.dueDays == todoist::DUE_NONE) return;
+  if (task.overdue) {
+    snprintf(out, outSize, "%s", tr(STR_OVERDUE));
+    return;
+  }
+  const uint16_t today = todoist::dueDaysFromIso(TODOIST_TASKS.getSyncDate().c_str());
+  if (today != todoist::DUE_NONE && task.dueDays == today) {
+    snprintf(out, outSize, "%s", tr(STR_TODAY));
+    return;
+  }
+  planner::formatDayLabel(task.dueDays, out, outSize);
+}
+
+int rebuildVisibleTabs(const TaskTab& wanted, std::vector<TaskTab>& visibleTabs, const uint32_t projectScope,
                        const bool includeLogs) {
   visibleTabs.clear();
-  visibleTabs.reserve(5);
-  // Each of these earns its place by having rows, so an inbox with nothing
-  // overdue carries no dead Overdue tab.
-  for (const TaskTabKind kind :
-       {TaskTabKind::OVERDUE, TaskTabKind::TODAY, TaskTabKind::UPCOMING, TaskTabKind::NO_DATE}) {
-    if (countFor(kind, projectScope) > 0) visibleTabs.push_back(kind);
+
+  // The distinct labels of the tasks in scope, alphabetical. Labels are short and the task list is
+  // capped at 60, so a sorted vector is plenty.
+  std::vector<std::string> labels;
+  labels.reserve(16);
+  bool anyUnlabelled = false;
+  for (const auto& task : TODOIST_TASKS.getTasks()) {
+    if (!inProjectScope(task, projectScope)) continue;
+    if (task.labels.empty()) anyUnlabelled = true;
+    forEachLabel(task.labels, [&](const char* start, const size_t length) {
+      const std::string name(start, length);
+      const auto at =
+          std::lower_bound(labels.begin(), labels.end(), name,
+                           [](const std::string& a, const std::string& b) { return compareLabels(a, b) < 0; });
+      if (at != labels.end() && compareLabels(*at, name) == 0) return;
+      labels.insert(at, name);
+    });
   }
+
+  visibleTabs.reserve(labels.size() + 2);
+  for (auto& name : labels) visibleTabs.push_back(TaskTab::withLabel(std::move(name)));
+  if (anyUnlabelled) visibleTabs.push_back(TaskTab::unlabelled());
   // Logs always shows when asked for -- it's a log view, not a filter, so an
   // empty state ("nothing completed today yet") is itself useful feedback
   // rather than noise to hide. It's also what keeps this list from ever being
   // empty.
-  if (includeLogs) visibleTabs.push_back(TaskTabKind::LOGS);
+  if (includeLogs) visibleTabs.push_back(TaskTab::logs());
 
   for (size_t i = 0; i < visibleTabs.size(); i++) {
     if (visibleTabs[i] == wanted) return static_cast<int>(i);
   }
-  // Falls back to the first visible tab when the selected kind just emptied
-  // - completing the last overdue task, say, which takes its tab away while
+  // Falls back to the first visible tab when the selected one just emptied -
+  // completing the last task under a label, say, which takes its tab away while
   // the user is standing on it. (An empty list, possible only without Logs,
   // leaves 0 pointing at nothing -- the caller owns that case.)
   return 0;
 }
 
-const char* tabLabel(const TaskTabKind kind) {
-  switch (kind) {
-    case TaskTabKind::OVERDUE:
-      return tr(STR_OVERDUE);
-    case TaskTabKind::TODAY:
-      return tr(STR_TODAY);
-    case TaskTabKind::UPCOMING:
-      return tr(STR_TASKS_TAB_UPCOMING);
-    case TaskTabKind::NO_DATE:
-      return tr(STR_TASKS_TAB_NO_DATE);
-    case TaskTabKind::LOGS:
+const char* tabLabel(const TaskTab& tab) {
+  switch (tab.type) {
+    case TaskTab::Type::LABEL:
+      return tab.label.c_str();
+    case TaskTab::Type::UNLABELLED:
+      return tr(STR_UNLABELLED);
+    case TaskTab::Type::LOGS:
       return tr(STR_LOGS);
   }
   return "";

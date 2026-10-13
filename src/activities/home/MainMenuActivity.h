@@ -34,6 +34,7 @@ class MainMenuActivity final : public Activity {
   explicit MainMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("MainMenu", renderer, mappedInput) {}
 
+  ResumeScreen resumeScreen() const override { return ResumeScreen::Home; }
   void onEnter() override;
   void loop() override;
   void render(RenderLock&&) override;
