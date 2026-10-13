@@ -213,7 +213,6 @@ void MainMenuActivity::render(RenderLock&&) {
                     focus == Stop::Band ? bandStop : StatusBand::Stop::None);
 
   const TileLayout layout = tileLayout();
-  const int labelHeight = renderer.getLineHeight(UI_12_FONT_ID);
   const int iconSize = layout.iconSize;
 
   struct Tile {
@@ -233,7 +232,6 @@ void MainMenuActivity::render(RenderLock&&) {
     const int labelWidth = renderer.getTextWidth(UI_12_FONT_ID, label.c_str(), style);
 
     // The icon and its label, inside the option's box.
-    const int contentHeight = iconSize + LABEL_GAP + labelHeight;
     const int boxTop = i == 0 ? layout.firstBoxTop : layout.secondBoxTop;
     const int contentTop = boxTop + SELECTION_PADDING;
 
