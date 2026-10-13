@@ -217,9 +217,8 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_INVERT_SLEEP_SCREEN, &CrossPointSettings::sleepScreenInvert, "sleepScreenInvert",
                             StrId::STR_CAT_DISPLAY),
-        SettingInfo::Enum(StrId::STR_ORGANIZER_FONT_SIZE, &CrossPointSettings::organizerFontSize,
-                          {StrId::STR_SIZE_SMALL, StrId::STR_SIZE_LARGE}, "organizerFontSize",
-                          StrId::STR_CAT_ORGANIZER),
+        SettingInfo::Enum(StrId::STR_PLANNER_FONT_SIZE, &CrossPointSettings::plannerFontSize,
+                          {StrId::STR_SIZE_SMALL, StrId::STR_SIZE_LARGE}, "plannerFontSize", StrId::STR_CAT_PLANNER),
         SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
                           {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
                            StrId::STR_THEME_ROUNDEDRAFF},
@@ -228,9 +227,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                             StrId::STR_CAT_DISPLAY),
 
         // --- Companion (persisted here, rendered by its own dedicated screen) ---
-        // No enabled/disabled toggle -- the companion's screen is Home (see
-        // ActivityManager::goHome()), so it is always active. No mood-label
-        // toggle either -- the mood label itself was removed from that screen.
+        // The companion's screen is Home (see ActivityManager::goHome()), so it is
+        // always there; showCompanion only hides the figure and its bubble on it.
+        SettingInfo::Toggle(StrId::STR_SHOW_COMPANION, &CrossPointSettings::showCompanion, "showCompanion",
+                            StrId::STR_COMPANION),
         // Sleep window, local wall-clock time -- rendered on-device as two HH:MM
         // rows (CompanionSettingsActivity), but persisted here as four plain
         // bytes since that is what toJson()/fromJson() walk by key.

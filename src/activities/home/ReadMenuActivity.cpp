@@ -157,7 +157,7 @@ void ReadMenuActivity::loop() {
   if (swipe == MappedInputManager::SwipeDir::Up) {
     // A swipe is a page-jump, not a single step, so it always leaves the
     // header stop (if it was focused) -- same reasoning as
-    // OrganizerScreenActivity's own swipe handling.
+    // PlannerScreenActivity's own swipe handling.
     headerFocused = false;
     selectedIndex = ButtonNavigator::nextIndex(selectedIndex, itemCount);
     requestUpdate();
@@ -203,7 +203,7 @@ void ReadMenuActivity::render(RenderLock&&) {
   const auto pageHeight = renderer.getScreenHeight();
 
   const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, tr(STR_MENU_READ), nullptr);
+  GUI.drawHeader(renderer, headerRect, tr(STR_MENU_READER), nullptr);
   // Hovering the header (see headerFocused's own comment): a true pixel
   // invert, the same technique QuickPickActivity's own header focus uses.
   if (headerFocused) {

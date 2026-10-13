@@ -231,11 +231,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Sleep screen settings
   uint8_t sleepScreen = DARK;
   // Sleep screen cover mode settings
-  // Font size for the Organizer screens (tasks and calendar). One setting for
+  // Font size for the Planner screens (tasks and calendar). One setting for
   // both tabs: they are read the same way, at the same distance, and splitting
   // them would be two settings answering one question.
-  enum ORGANIZER_FONT_SIZE { ORGANIZER_FONT_SMALL = 0, ORGANIZER_FONT_LARGE, ORGANIZER_FONT_SIZE_COUNT };
-  uint8_t organizerFontSize = ORGANIZER_FONT_SMALL;
+  enum PLANNER_FONT_SIZE { PLANNER_FONT_SMALL = 0, PLANNER_FONT_LARGE, PLANNER_FONT_SIZE_COUNT };
+  uint8_t plannerFontSize = PLANNER_FONT_SMALL;
 
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
@@ -329,6 +329,10 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   // Index into companion::COMPANION_SPRITES (0 = the first companion).
   // Persisted numerically, so sprites/order.txt is append-only.
   uint8_t companionId = 0;
+  // Whether the Companion screen draws the companion figure and its speech
+  // bubble. Off hands that space to the Tasks section below it and drops the
+  // figure from the focus loop; the alerts and calendar rows above are unaffected.
+  uint8_t showCompanion = 1;
   // Sleep window the companion shows the Sleeping mood during, local wall-clock
   // time. Default 22:00-07:00. May wrap past midnight (start > end); start ==
   // end means the window never applies (24 awake hours, not 24 asleep).
