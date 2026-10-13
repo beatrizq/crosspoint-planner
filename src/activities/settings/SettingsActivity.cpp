@@ -40,6 +40,7 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/BleNotifyRelay.h"
+#include "util/Version.h"
 
 StrId SettingsActivity::bucketName(const SettingsBucket bucket) {
   switch (bucket) {
@@ -720,9 +721,9 @@ void SettingsActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
 
   if (headerFocused) bandStop = band.clamp(bandStop);
-  const int headerBottom =
-      band.drawTitled(renderer, isSubmenu ? I18N.get(bucketName(tabBuckets[0])) : tr(STR_SETTINGS_TITLE),
-                      isSubmenu ? nullptr : CROSSPOINT_VERSION, headerFocused ? bandStop : StatusBand::Stop::None);
+  const int headerBottom = band.drawTitled(
+      renderer, isSubmenu ? I18N.get(bucketName(tabBuckets[0])) : tr(STR_SETTINGS_TITLE),
+      isSubmenu ? nullptr : crosspointBuildVersion(), headerFocused ? bandStop : StatusBand::Stop::None);
 
   std::vector<TabInfo> tabs;
   tabs.reserve(categoryCount());
