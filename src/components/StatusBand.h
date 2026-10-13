@@ -39,6 +39,7 @@ class StatusBand {
     std::string title;
     std::string time;  // ", HH:MM" (pre-formatted, own leading separator), or empty.
     bool isFallback = false;
+    bool isNone = false;  // the "No events" line: synced, but nothing left today
   };
   static std::vector<EventRow> todaysEvents(bool includeSyncHint);
 

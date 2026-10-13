@@ -41,6 +41,8 @@ constexpr int GLANCE_STRIP_GAP = 10;
 // The gap between a row's leading bullet/icon and its text.
 constexpr int GLANCE_ICON_GAP = 8;
 constexpr int BULLET_SIZE = 6;
+// The x that stands in for the dot on the "No events" line: the same size as the dot.
+constexpr int NONE_MARK_SIZE = BULLET_SIZE;
 
 // The alert: padding above and below its text, how many lines it may wrap over,
 // its bell icon (bell24.h is 24x24), and the gap under it before whatever follows.
@@ -100,7 +102,12 @@ int drawCalendarRows(const GfxRenderer& renderer, const int y, const std::vector
   int rowY = y + (height - textHeight) / 2;
   for (const auto& row : rows) {
     // No bullet for a fallback line (not synced yet): it isn't an event.
-    if (!row.isFallback) {
+    if (row.isNone) {
+      // An x where an event has its dot.
+      const int markY = rowY + (lineH - NONE_MARK_SIZE) / 2;
+      renderer.drawLine(bulletX, markY, bulletX + NONE_MARK_SIZE - 1, markY + NONE_MARK_SIZE - 1, 2, true);
+      renderer.drawLine(bulletX + NONE_MARK_SIZE - 1, markY, bulletX, markY + NONE_MARK_SIZE - 1, 2, true);
+    } else if (!row.isFallback) {
       renderer.fillRoundedRect(bulletX, rowY + (lineH - BULLET_SIZE) / 2, BULLET_SIZE, BULLET_SIZE, BULLET_SIZE / 2,
                                Color::Black);
     }
@@ -200,7 +207,13 @@ std::vector<StatusBand::EventRow> StatusBand::todaysEvents(const bool includeSyn
     }
     rows.push_back(std::move(row));
   }
-  // Empty (not a placeholder) when synced and there is genuinely nothing today.
+  // Synced with nothing left today: the Planner (the only caller that sets includeSyncHint) says so
+  // with a line of its own; elsewhere the band just collapses.
+  if (rows.empty() && includeSyncHint) {
+    EventRow none{std::string(tr(STR_NO_EVENTS_TODAY)), "", false};
+    none.isNone = true;
+    rows.push_back(std::move(none));
+  }
   return rows;
 }
 
