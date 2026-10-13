@@ -2,6 +2,8 @@
 
 #ifdef ENABLE_BLE_NOTIFY_SPIKE
 
+#include <Utf8.h>
+
 #include <algorithm>
 #include <cstring>
 
@@ -24,6 +26,17 @@ void sanitizeControlChars(char* text) {
     if (static_cast<unsigned char>(*p) < ' ') *p = ' ';
   }
 }
+
+// Cleans one stored field, in place: cuts it back to a whole UTF-8 character (the
+// strlcpy into a fixed-size field can split a multi-byte character -- an emoji is
+// four bytes -- leaving a broken tail), drops the invisible emoji-sequence parts the
+// device's emoji font has no glyph for (see utf8StripEmojiModifiers()), then
+// replaces control characters.
+void cleanField(char* text) {
+  text[utf8SafeTruncateBuffer(text, static_cast<int>(strlen(text)))] = '\0';
+  utf8StripEmojiModifiers(text);
+  sanitizeControlChars(text);
+}
 }  // namespace
 
 void BleNotificationQueue::push(const uint32_t id, const bool isCall, const char* sender, const char* title,
@@ -36,9 +49,9 @@ void BleNotificationQueue::push(const uint32_t id, const bool isCall, const char
   strlcpy(incoming.sender, sender != nullptr ? sender : "", sizeof(incoming.sender));
   strlcpy(incoming.title, title != nullptr ? title : "", sizeof(incoming.title));
   strlcpy(incoming.content, content != nullptr ? content : "", sizeof(incoming.content));
-  sanitizeControlChars(incoming.sender);
-  sanitizeControlChars(incoming.title);
-  sanitizeControlChars(incoming.content);
+  cleanField(incoming.sender);
+  cleanField(incoming.title);
+  cleanField(incoming.content);
 
   // A BLE reconnect can resend every notification still active on the phone,
   // not just what arrived since the last connection (Gadgetbridge itself has

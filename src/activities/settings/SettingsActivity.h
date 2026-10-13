@@ -8,6 +8,7 @@
 #include "CrossPointSettings.h"
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
+#include "components/StatusBand.h"
 #include "util/ButtonNavigator.h"
 
 enum class SettingType { TOGGLE, ENUM, ACTION, VALUE, STRING };
@@ -175,6 +176,11 @@ class SettingsActivity final : public Activity {
   // headerFocused uses, just one level higher up: header, then tab bar
   // (categories), then setting rows.
   bool headerFocused = false;
+  // The top of the screen -- status bar, today's calendar events, the newest pending
+  // alert (see StatusBand) -- on the top-level screen only; a category's own submenu
+  // draws the plain header. While headerFocused, bandStop says which of them has focus.
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
 
   // Per-category settings derived from shared list + device-only actions
   std::vector<SettingInfo> displaySettings;

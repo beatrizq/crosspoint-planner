@@ -220,6 +220,11 @@ void ActivityManager::goToSyncAll(std::function<void()> onReturn) {
   replaceActivity(std::make_unique<SyncAllActivity>(renderer, mappedInput, std::move(onReturn)));
 }
 
+void ActivityManager::goToSyncAllResumed(const uint32_t alreadyDoneMask) {
+  replaceActivity(std::make_unique<SyncAllActivity>(renderer, mappedInput, nullptr, alreadyDoneMask,
+                                                    /*resumedAfterRestart=*/true));
+}
+
 #ifdef ENABLE_BLE_NOTIFY_SPIKE
 void ActivityManager::goToBleNotifications() {
   replaceActivity(std::make_unique<BleNotificationsActivity>(renderer, mappedInput));

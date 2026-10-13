@@ -100,19 +100,16 @@ AppId adjacentVisibleApp(const AppId current, const bool forward) {
   int order[APP_COUNT];
   parse(SETTINGS.homeAppOrder, order);
 
-  // Same visibility gates HomeActivity::buildEntries() applies -- an app that
-  // is not really a selectable tile right now should not be a stop on this
-  // cycle either.
+  // The cycle is the main screen's own two destinations -- Reader and Planner
+  // (AppId::Companion) -- in the user's order. Tasks, Calendar, Alerts and
+  // Settings are not stops on it: Calendar and Alerts are opened from inside the
+  // Planner, Tasks has no entry point of its own any more, and Settings opens
+  // from the main screen's Right1.
   AppId visible[APP_COUNT];
   int count = 0;
   for (const int index : order) {
     const auto& app = appAt(index);
-#ifndef ENABLE_BLE_NOTIFY_SPIKE
-    if (app.id == AppId::Notifications) continue;
-#endif
-    // Never a grid tile any more (see HomeActivity::buildEntries()), so never
-    // a stop on this cycle either.
-    if (app.id == AppId::Settings) continue;
+    if (app.id != AppId::Read && app.id != AppId::Companion) continue;
     visible[count++] = app.id;
   }
   if (count == 0) return current;

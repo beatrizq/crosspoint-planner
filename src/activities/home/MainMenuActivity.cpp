@@ -20,13 +20,16 @@ namespace {
 // is sized for a full title band this screen does not draw, so the layout below
 // uses the height of just the clock/battery row.
 constexpr int STATUS_BAR_HEIGHT = 36;
-constexpr int STATUS_BAR_HIGHLIGHT_HEIGHT = STATUS_BAR_HEIGHT - 6;
-// Between the status bar and the first tile.
-constexpr int STATUS_BAR_GAP = 10;
 
-// The tile artwork: the source bitmaps are 80x80, drawn at up to this size.
+// The tile artwork: the source bitmaps are 80x80, drawn at up to this size (70% of
+// the 160px they were first drawn at), and never smaller than MIN_ICON_SIZE even when
+// the band above takes a lot of room.
 constexpr int SOURCE_ICON_SIZE = 80;
-constexpr int MAX_ICON_SIZE = 160;
+constexpr int MAX_ICON_SIZE = 112;
+constexpr int MIN_ICON_SIZE = 64;
+// The least space left above, between and below the two options before the icons
+// shrink to make more.
+constexpr int MIN_GAP = 8;
 // The label sits this far under its icon, and the selection outline stands this
 // far (times 4 on the sides, as the old home grid did) clear of the pair.
 constexpr int LABEL_GAP = 12;
@@ -72,7 +75,11 @@ void drawScaledIcon(const GfxRenderer& renderer, const uint8_t* bitmap, const in
 
 void MainMenuActivity::onEnter() {
   Activity::onEnter();
-  focus = Stop::Read;
+  // Back on the tile of the area just left: the Planner screen's Home puts focus on
+  // the Planner, the Reader's on the Reader (see setReturnArea()).
+  focus = returnArea == HomeArea::Planner ? Stop::Planner : Stop::Read;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.poll();
   settingsPressSeen = false;
   swallowConfirmRelease = mappedInput.isPressed(MappedInputManager::Button::Right2);
   requestUpdate();
@@ -80,17 +87,41 @@ void MainMenuActivity::onEnter() {
 
 MainMenuActivity::TileLayout MainMenuActivity::tileLayout() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int top = metrics.topPadding + STATUS_BAR_HEIGHT + STATUS_BAR_GAP;
+  // From just below the band as it was last drawn (the status bar, plus whatever
+  // calendar rows and alert are showing) down to the front-button labels.
+  const int top = band.bottom(renderer);
   const int bottom = renderer.getScreenHeight() - metrics.buttonHintsHeight - metrics.buttonHintsGap;
-  return TileLayout{top, std::max(0, (bottom - top) / 2)};
+  const int available = bottom - top;
+
+  // Everything in an option's box except its icon: the label under it and the padding
+  // around both.
+  const int chrome = LABEL_GAP + renderer.getLineHeight(UI_12_FONT_ID) + 2 * SELECTION_PADDING;
+  // As large as the artwork goes while two boxes and three gaps of at least MIN_GAP
+  // still fit.
+  const int fitIcon = (available - 3 * MIN_GAP) / 2 - chrome;
+  const int iconSize = std::max(MIN_ICON_SIZE, std::min(MAX_ICON_SIZE, fitIcon));
+  const int boxHeight = iconSize + chrome;
+
+  // Three equal gaps: above the first box, between the two, below the second.
+  const int gap = std::max(0, (available - 2 * boxHeight) / 3);
+  const int firstBoxTop = top + gap;
+  return TileLayout{iconSize, boxHeight, gap, firstBoxTop, firstBoxTop + boxHeight + gap};
 }
 
 void MainMenuActivity::activateFocused() {
   switch (focus) {
-    case Stop::StatusBar:
-      // Returns here once the sync is done; goHome() is the one mechanism every
-      // other screen's own Sync All return uses too.
-      activityManager.goToSyncAll([] { activityManager.goHome(); });
+    case Stop::Band:
+      if (bandStop == StatusBand::Stop::StatusBar) {
+        // Returns here once the sync is done; goHome() is the one mechanism every
+        // other screen's own Sync All return uses too.
+        activityManager.goToSyncAll([] { activityManager.goHome(); });
+      } else {
+        // Dismisses the alert (the next-newest takes its place); nothing to do on
+        // the calendar rows.
+        band.handleRight2(bandStop);
+        bandStop = band.clamp(bandStop);
+        requestUpdate();
+      }
       break;
     case Stop::Read:
       activityManager.goToReadMenu();
@@ -102,35 +133,58 @@ void MainMenuActivity::activateFocused() {
 }
 
 void MainMenuActivity::loop() {
+  // An alert arriving or being dismissed elsewhere, or a calendar event ending, changes
+  // what the band shows: repaint, and keep focus on a stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (focus == Stop::Band) bandStop = band.clamp(bandStop);
+
+  // One continuous loop: the band's stops, Reader, Planner, and back around.
   buttonNavigator.onNext([this] {
-    focus = static_cast<Stop>((static_cast<int>(focus) + 1) % STOP_COUNT);
+    if (focus == Stop::Band) {
+      if (!band.step(bandStop, /*forward=*/true)) focus = Stop::Read;
+    } else if (focus == Stop::Read) {
+      focus = Stop::Planner;
+    } else {
+      focus = Stop::Band;
+      bandStop = band.first();
+    }
     requestUpdate();
   });
   buttonNavigator.onPrevious([this] {
-    focus = static_cast<Stop>((static_cast<int>(focus) + STOP_COUNT - 1) % STOP_COUNT);
+    if (focus == Stop::Band) {
+      if (!band.step(bandStop, /*forward=*/false)) focus = Stop::Planner;
+    } else if (focus == Stop::Read) {
+      focus = Stop::Band;
+      bandStop = band.last();
+    } else {
+      focus = Stop::Read;
+    }
     requestUpdate();
   });
 
   if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) settingsPressSeen = true;
   if (mappedInput.wasPressed(MappedInputManager::Button::Right2)) swallowConfirmRelease = false;
 
-  // Right1 is Settings from every stop -- there is nowhere to go back to from
-  // Home. settingsPressSeen guards against the stale release of the press that
-  // closed the previous screen.
+  // Right1 is Settings from every stop except the calendar rows and the alert (it
+  // opens those screens) -- there is nowhere to go back to from Home. settingsPressSeen
+  // guards against the stale release of the press that closed the previous screen.
   if (mappedInput.wasReleased(MappedInputManager::Button::Right1) && settingsPressSeen) {
+    if (focus == Stop::Band && band.handleRight1(bandStop)) return;
     activityManager.goToSettings();
     return;
   }
 
-  // A tap on a tile selects and opens it.
+  // A tap on an option selects and opens it. Each option's tap area is its box plus
+  // half the gap on either side, so the two meet in the middle of the gap between them.
   const TileLayout layout = tileLayout();
   const int width = renderer.getScreenWidth();
-  if (mappedInput.wasTapInRect(0, layout.top, width, layout.height)) {
+  const int halfGap = layout.gap / 2;
+  if (mappedInput.wasTapInRect(0, layout.firstBoxTop - halfGap, width, layout.boxHeight + 2 * halfGap)) {
     focus = Stop::Read;
     activateFocused();
     return;
   }
-  if (mappedInput.wasTapInRect(0, layout.top + layout.height, width, layout.height)) {
+  if (mappedInput.wasTapInRect(0, layout.secondBoxTop - halfGap, width, layout.boxHeight + 2 * halfGap)) {
     focus = Stop::Planner;
     activateFocused();
     return;
@@ -151,22 +205,15 @@ void MainMenuActivity::render(RenderLock&&) {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const int pageWidth = renderer.getScreenWidth();
 
-  // The status bar is the theme's own clock/date/battery row: a null title and
-  // subtitle drop the title band and leave just that row (see QuickPickActivity's
-  // render() for the per-theme details).
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, /*title=*/nullptr, /*subtitle=*/nullptr, /*showRule=*/true);
-  // Hovering it: a true pixel invert over just the clock/battery row.
-  if (focus == Stop::StatusBar) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width, STATUS_BAR_HIGHLIGHT_HEIGHT);
-  }
+  // The top of the screen is the shared status band: the theme's clock/date/battery
+  // row, today's calendar events, the newest pending alert (see StatusBand). This
+  // screen has no title of its own, so it is drawn untitled.
+  if (focus == Stop::Band) bandStop = band.clamp(bandStop);
+  band.drawUntitled(renderer, metrics.topPadding, STATUS_BAR_HEIGHT,
+                    focus == Stop::Band ? bandStop : StatusBand::Stop::None);
 
   const TileLayout layout = tileLayout();
-  const int labelHeight = renderer.getLineHeight(UI_12_FONT_ID);
-  // As large as the artwork goes, but never so large the icon, its label and the
-  // selection outline around both do not fit the tile's band.
-  const int fitIconSize = layout.height - LABEL_GAP - labelHeight - SELECTION_PADDING * 4;
-  const int iconSize = std::max(SOURCE_ICON_SIZE, std::min(MAX_ICON_SIZE, fitIconSize));
+  const int iconSize = layout.iconSize;
 
   struct Tile {
     Stop stop;
@@ -184,17 +231,16 @@ void MainMenuActivity::render(RenderLock&&) {
     const std::string label = renderer.truncatedText(UI_12_FONT_ID, tiles[i].label, pageWidth - 32, style);
     const int labelWidth = renderer.getTextWidth(UI_12_FONT_ID, label.c_str(), style);
 
-    // The icon and its label, centred together in the tile's band.
-    const int contentHeight = iconSize + LABEL_GAP + labelHeight;
-    const int contentTop = layout.top + i * layout.height + (layout.height - contentHeight) / 2;
+    // The icon and its label, inside the option's box.
+    const int boxTop = i == 0 ? layout.firstBoxTop : layout.secondBoxTop;
+    const int contentTop = boxTop + SELECTION_PADDING;
 
     if (selected) {
       // An outline, not a fill: the artwork is line work, and inverting a tile
       // this size is a lot of ink to move on every selection change.
       const int boxWidth = std::max(iconSize, labelWidth) + SELECTION_PADDING * 4;
-      const int boxHeight = contentHeight + SELECTION_PADDING * 2;
-      renderer.drawRoundedRect((pageWidth - boxWidth) / 2, contentTop - SELECTION_PADDING, boxWidth, boxHeight,
-                               SELECTION_LINE_WIDTH, SELECTION_CORNER_RADIUS, true);
+      renderer.drawRoundedRect((pageWidth - boxWidth) / 2, boxTop, boxWidth, layout.boxHeight, SELECTION_LINE_WIDTH,
+                               SELECTION_CORNER_RADIUS, true);
     }
 
     drawScaledIcon(renderer, tiles[i].icon, (pageWidth - iconSize) / 2, contentTop, iconSize);
@@ -202,11 +248,12 @@ void MainMenuActivity::render(RenderLock&&) {
                       true, style);
   }
 
-  // Right1 is Settings from every stop; Right2 is Sync All on the status bar and
-  // Select on a tile.
-  const auto labels =
-      mappedInput.mapLabels(tr(STR_SETTINGS_TITLE), focus == Stop::StatusBar ? tr(STR_SYNC_ALL) : tr(STR_SELECT),
-                            tr(STR_DIR_PREV), tr(STR_DIR_NEXT));
+  // Right1 is Settings (the calendar rows and the alert open their own screens);
+  // Right2 is Sync All on the status bar, Dismiss on the alert, and Select on a tile.
+  const bool onBandAction = focus == Stop::Band && bandStop != StatusBand::Stop::StatusBar;
+  const auto labels = mappedInput.mapLabels(onBandAction ? band.right1Label(bandStop) : tr(STR_SETTINGS_TITLE),
+                                            focus == Stop::Band ? band.right2Label(bandStop) : tr(STR_SELECT),
+                                            tr(STR_DIR_PREV), tr(STR_DIR_NEXT));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

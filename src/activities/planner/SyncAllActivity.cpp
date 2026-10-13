@@ -6,6 +6,7 @@
 #include <Logging.h>
 #include <WiFi.h>
 
+#include <cstring>
 #include <memory>
 #include <string>
 
@@ -15,6 +16,16 @@
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "network/BleNotifyRelay.h"
+
+namespace {
+// One line of heap state: total free and the largest single block. A TLS request
+// needs both (see the LOW_MEMORY gates in GCalAuth/GCalClient/TodoistClient), and a
+// fragmented heap can have plenty of the first and too little of the second.
+void logHeap(const char* stage) {
+  LOG_INF("SYNCALL", "Heap %s: %u free, %u largest block", stage, static_cast<unsigned>(ESP.getFreeHeap()),
+          static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+}  // namespace
 
 void SyncAllActivity::onEnter() {
   Activity::onEnter();
@@ -26,6 +37,8 @@ void SyncAllActivity::onEnter() {
     const bool ready = plannerSync::isConfigured(plannerSync::serviceAt(i));
     states[i] = ready ? RowState::Waiting : RowState::Skipped;
     if (ready) configured++;
+    // Finished before the restart this run resumes from: shown done, not run again.
+    if (ready && (alreadyDoneMask & (1u << i)) != 0) states[i] = RowState::Done;
   }
 
   if (configured == 0) {
@@ -46,7 +59,10 @@ void SyncAllActivity::onEnter() {
   // NimBLEDevice::init()'s deinit()-then-reinit path here (see
   // BleNotifyRelay::resume()'s own doc comment for the vendored library bug
   // that path hits).
+  if (resumedAfterRestart) logHeap("resumed after restart");
+  logHeap("before BLE pause");
   BleNotifyRelay::pause();
+  logHeap("after BLE pause");
 
   if (WiFi.status() == WL_CONNECTED) {
     runAll();
@@ -94,9 +110,11 @@ void SyncAllActivity::runAll() {
   // "today"). A run without Tasks configured -- or one where it fails -- would
   // otherwise leave the clock untouched even though WiFi is already up here.
   halClock.syncFromNTP();
+  logHeap("WiFi up");
 
   for (int i = 0; i < plannerSync::SERVICE_COUNT; i++) {
     if (states[i] != RowState::Waiting) continue;
+    logHeap(plannerSync::name(plannerSync::serviceAt(i)));
 
     {
       RenderLock lock;
@@ -108,6 +126,22 @@ void SyncAllActivity::runAll() {
     requestUpdateAndWait();
 
     const char* failure = plannerSync::run(plannerSync::serviceAt(i));
+
+    // Out of memory part-way through: the heap this run started with is too fragmented
+    // for the next TLS connection, and a restart gives it back clean. So restart now and
+    // reopen Sync All on its own with what is already done marked, instead of showing a
+    // failure the user would have to retry by hand. Once per run: the resumed run
+    // reports a second one as the failure it is.
+    if (failure != nullptr && !resumedAfterRestart && strcmp(failure, tr(STR_MEMORY_ERROR)) == 0) {
+      uint32_t doneMask = 0;
+      for (int j = 0; j < plannerSync::SERVICE_COUNT; j++) {
+        if (states[j] == RowState::Done) doneMask |= 1u << j;
+      }
+      LOG_ERR("SYNCALL", "%s ran out of memory; restarting to clear the heap, then resuming",
+              plannerSync::name(plannerSync::serviceAt(i)));
+      logHeap("at the memory error");
+      silentRestartToSyncAll(doneMask);  // does not return, unless deep sleep has already taken over
+    }
 
     {
       RenderLock lock;

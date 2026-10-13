@@ -7,6 +7,7 @@
 
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "components/StatusBand.h"
 #include "util/ButtonNavigator.h"
 
 class FileBrowserActivity final : public Activity {
@@ -28,6 +29,11 @@ class FileBrowserActivity final : public Activity {
   // loop()'s own comment): a firmware/image picker is a narrow, single-
   // purpose flow with no reason to reach Sync All from it.
   bool headerFocused = false;
+  // The top of the screen -- status bar, today's calendar events, the newest pending
+  // alert (see StatusBand) -- in Books mode only; the pickers draw the plain header.
+  // While headerFocused, bandStop says which of them has focus.
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
 
   bool lockLongPressBack = false;
   // True when this activity was entered while Confirm was already held; we must swallow the next

@@ -181,6 +181,16 @@ void LyraTheme::fillBatteryIcon(const GfxRenderer& renderer, Rect rect, uint16_t
     // Solid fill when charging so lightning bolt is visible
     renderer.fillRect(rect.x + 2, rect.y + 2, rect.width - 5, rect.height - 4);
     drawBatteryLightningBolt(renderer, rect.x + 4, rect.y + 2);
+  } else if (rect.width >= 20) {
+    // The header's enlarged icon (headerBatteryWidth, 22px) has room for four
+    // bars: 3px each with 2px between, from the same 2px inset the small icon
+    // uses (2 + 4*3 + 3*2 = 20, leaving 2px on the right). Three fixed bars, as
+    // below, could never fill it, so a full battery read as three quarters.
+    constexpr int BAR_STEP = 5;
+    const int bars = percentage > 85 ? 4 : percentage > 60 ? 3 : percentage > 35 ? 2 : percentage > 10 ? 1 : 0;
+    for (int i = 0; i < bars; i++) {
+      renderer.fillRect(rect.x + 2 + i * BAR_STEP, rect.y + 2, 3, rect.height - 4);
+    }
   } else {
     if (percentage > 10) {
       renderer.fillRect(rect.x + 2, rect.y + 2, 3, rect.height - 4);

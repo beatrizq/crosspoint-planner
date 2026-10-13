@@ -42,6 +42,12 @@ void PlannerScreenActivity::onEnter() {
   if (activeTab < 0 || activeTab >= tabCount()) activeTab = 0;
   selectedIndex = 0;
   headerFocused = false;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.setShowCalendar(false);
+  band.poll();
+  // Right1 can still be down if a screen opened this one on the press: its release is
+  // not a request to leave.
+  swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   requestUpdate();
 }
 
@@ -99,7 +105,7 @@ int PlannerScreenActivity::listRowHeight() const {
 
 int PlannerScreenActivity::listTop() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  return metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.verticalSpacing;
+  return band.bottom(renderer) + metrics.tabBarHeight + metrics.verticalSpacing;
 }
 
 int PlannerScreenActivity::listHeight() const {
@@ -201,6 +207,11 @@ void PlannerScreenActivity::finishSync(const char* failureMessage) {
 void PlannerScreenActivity::loop() {
   if (state == State::SYNCING) return;  // ignore input while the sync blocks
 
+  // An alert arriving or being dismissed elsewhere changes what the band shows:
+  // repaint, and keep focus on a stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (headerFocused) bandStop = band.clamp(bandStop);
+
   // A press seen here is a fresh one, so nothing is owed any more.
   if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) swallowBackRelease = false;
 
@@ -212,6 +223,8 @@ void PlannerScreenActivity::loop() {
       swallowBackRelease = false;
       return;
     }
+    // On the alert, Right1 opens the Alerts screen.
+    if (headerFocused && band.handleRight1(bandStop)) return;
     // Two-level Back: from a row it first surfaces the cursor to the tab bar
     // (labelled Back, see render()); only from the tab bar or the header does
     // it leave the screen (labelled Home).
@@ -232,6 +245,13 @@ void PlannerScreenActivity::loop() {
       // The tail of the press that answered the confirmation prompt. Acting on
       // it would reopen the prompt, and cancelling would reopen it again.
       swallowConfirmRelease = false;
+      return;
+    }
+    if (headerFocused && bandStop != StatusBand::Stop::StatusBar) {
+      // Dismisses the alert (the next-newest takes its place).
+      band.handleRight2(bandStop);
+      bandStop = band.clamp(bandStop);
+      requestUpdate();
       return;
     }
     if (headerFocused) {
@@ -267,35 +287,10 @@ void PlannerScreenActivity::loop() {
     return;
   }
 
-  // Side Up/Down: jump to the previous/next app in the home grid's own order,
-  // from wherever the cursor already is -- the same shortcut every app
-  // screen has (see QuickPickActivity/SettingsActivity's own identical
-  // block). Tab-switching (this screen's own tab bar) is still reachable the
-  // slower way: move the selection up to the tab bar and press Select to
-  // cycle it. Independent of the front buttons' own Up/Down (row paging)
-  // below; a fresh press each, same guard reasoning as Back/Confirm above.
-  if (mappedInput.wasPressed(MappedInputManager::Button::Up)) upPressSeen = true;
-  if (mappedInput.wasPressed(MappedInputManager::Button::Down)) downPressSeen = true;
-  if (mappedInput.wasReleased(MappedInputManager::Button::Up)) {
-    if (upPressSeen) activityManager.goToApp(homeAppOrder::adjacentVisibleApp(appId(), /*forward=*/false));
-    upPressSeen = false;
-    return;
-  }
-  if (mappedInput.wasReleased(MappedInputManager::Button::Down)) {
-    if (downPressSeen) activityManager.goToApp(homeAppOrder::adjacentVisibleApp(appId(), /*forward=*/true));
-    downPressSeen = false;
-    return;
-  }
-  // Swallowed for as long as either is held, on the press frame and every
-  // frame after: buttonNavigator's row paging below reacts to the logical
-  // NavNext/NavPrevious buttons, which are side Up/Down blended with front
-  // Left/Right (see MappedInputManager::mapButton). Without this, a side
-  // press would page a row immediately (NavNext/NavPrevious firing on the
-  // same press) and only switch the tab afterwards, on release.
-  if (mappedInput.isPressed(MappedInputManager::Button::Up) ||
-      mappedInput.isPressed(MappedInputManager::Button::Down)) {
-    return;
-  }
+  // Side Up/Down page the rows here, blended with the front Left1/Left2 (see
+  // MappedInputManager::mapButton()). They used to jump to the previous/next
+  // app; this screen is reached from the Planner now, so there is no app
+  // cycle to jump around from here.
 
   if (state != State::LIST) return;
 
@@ -315,7 +310,7 @@ void PlannerScreenActivity::loop() {
     tabs.reserve(tabCount());
     for (int i = 0; i < tabCount(); i++) tabs.push_back(TabInfo{tabLabel(i), i == activeTab});
     int tappedTab = -1;
-    const int tabTop = metrics.topPadding + metrics.headerHeight;
+    const int tabTop = band.bottom(renderer);
     if (GUI.tabIndexFromPoint(renderer, Rect{0, tabTop, renderer.getScreenWidth(), metrics.tabBarHeight}, tabs, tx, ty,
                               tappedTab)) {
       {
@@ -358,10 +353,14 @@ void PlannerScreenActivity::loop() {
 
   buttonNavigator.onNext([this, navCount] {
     if (headerFocused) {
-      headerFocused = false;
-      selectedIndex = 0;
+      // Down through the band's stops, then to the tab bar.
+      if (!band.step(bandStop, /*forward=*/true)) {
+        headerFocused = false;
+        selectedIndex = 0;
+      }
     } else if (selectedIndex == navCount - 1) {
       headerFocused = true;
+      bandStop = band.first();
     } else {
       selectedIndex = ButtonNavigator::nextIndex(selectedIndex, navCount);
     }
@@ -370,10 +369,14 @@ void PlannerScreenActivity::loop() {
 
   buttonNavigator.onPrevious([this, navCount] {
     if (headerFocused) {
-      headerFocused = false;
-      selectedIndex = navCount - 1;
+      // Up through the band's stops, then wrap to the last row.
+      if (!band.step(bandStop, /*forward=*/false)) {
+        headerFocused = false;
+        selectedIndex = navCount - 1;
+      }
     } else if (selectedIndex == 0) {
       headerFocused = true;
+      bandStop = band.last();
     } else {
       selectedIndex = ButtonNavigator::previousIndex(selectedIndex, navCount);
     }
@@ -394,19 +397,14 @@ void PlannerScreenActivity::render(RenderLock&&) {
   char status[64];
   status[0] = '\0';
   formatStatus(status, sizeof(status));
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, screenTitle(), status[0] == '\0' ? nullptr : status);
-  // Hovering the header (see headerFocused's own comment): a true pixel
-  // invert, the same technique QuickPickActivity's own header focus uses.
-  if (headerFocused) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width,
-                        std::min(HEADER_FOCUS_HIGHLIGHT_HEIGHT, headerRect.height));
-  }
+  if (headerFocused) bandStop = band.clamp(bandStop);
+  const int headerBottom = band.drawTitled(renderer, screenTitle(), status[0] == '\0' ? nullptr : status,
+                                           headerFocused ? bandStop : StatusBand::Stop::None);
 
   std::vector<TabInfo> tabs;
   tabs.reserve(tabCount());
   for (int i = 0; i < tabCount(); i++) tabs.push_back(TabInfo{tabLabel(i), i == activeTab});
-  GUI.drawTabBar(renderer, Rect{0, metrics.topPadding + metrics.headerHeight, pageWidth, metrics.tabBarHeight}, tabs,
+  GUI.drawTabBar(renderer, Rect{0, headerBottom, pageWidth, metrics.tabBarHeight}, tabs,
                  selectedIndex == 0 && !headerFocused);
 
   const int top = listTop();
@@ -468,7 +466,7 @@ void PlannerScreenActivity::render(RenderLock&&) {
 
   const char* confirmLabel;
   if (headerFocused) {
-    confirmLabel = tr(STR_SYNC_ALL);
+    confirmLabel = band.right2Label(bandStop);
   } else if (state == State::SYNCING) {
     confirmLabel = "";
   } else if (state == State::FAILED) {
@@ -487,8 +485,9 @@ void PlannerScreenActivity::render(RenderLock&&) {
   // Back on a row (it surfaces to the tab bar), Home once already there or on
   // the header -- see loop()'s own Right1 handler.
   const bool rowFocused = navigable && !headerFocused && selectedIndex > 0;
-  const auto labels = mappedInput.mapLabels(rowFocused ? tr(STR_BACK) : tr(STR_HOME), confirmLabel,
-                                            navigable ? tr(STR_DIR_UP) : "", navigable ? tr(STR_DIR_DOWN) : "");
+  const auto labels =
+      mappedInput.mapLabels(headerFocused ? band.right1Label(bandStop) : (rowFocused ? tr(STR_BACK) : tr(STR_HOME)),
+                            confirmLabel, navigable ? tr(STR_DIR_UP) : "", navigable ? tr(STR_DIR_DOWN) : "");
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

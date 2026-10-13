@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstring>
 #include <string>
 
 #include "Utf8.h"
@@ -51,4 +52,49 @@ TEST(Utf8ComposeNfc, HandlesLeadingMark) { EXPECT_EQ(utf8ComposeNfc(kCombAcute),
 TEST(Utf8ComposeNfc, ComposesWithinWord) {
   // "Ti" + e+circ+acute + "ng" -> "Tiếng"
   EXPECT_EQ(utf8ComposeNfc("Ti" + std::string("e") + kCombCirc + kCombAcute + "ng"), "Ti\xE1\xBA\xBFng");
+}
+
+// Emoji sequences are reduced to their base emoji: the invisible selectors,
+// joiners and skin tones have no glyph in the device font.
+namespace {
+std::string stripped(const std::string& in) {
+  std::string copy = in;
+  utf8StripEmojiModifiers(copy.data());
+  copy.resize(strlen(copy.c_str()));
+  return copy;
+}
+}  // namespace
+
+TEST(Utf8StripEmojiModifiers, LeavesPlainTextAndBareEmojiAlone) {
+  EXPECT_EQ(stripped("hello"), "hello");
+  EXPECT_EQ(stripped("caf\xC3\xA9 \xF0\x9F\x98\x80"), "caf\xC3\xA9 \xF0\x9F\x98\x80");  // café 😀
+  EXPECT_EQ(stripped(""), "");
+}
+
+TEST(Utf8StripEmojiModifiers, DropsVariationSelectors) {
+  EXPECT_EQ(stripped("\xE2\x9D\xA4\xEF\xB8\x8F"), "\xE2\x9D\xA4");  // ❤ + VS16 -> ❤
+  EXPECT_EQ(stripped("\xE2\x98\xBA\xEF\xB8\x8E"), "\xE2\x98\xBA");  // ☺ + VS15 -> ☺
+}
+
+TEST(Utf8StripEmojiModifiers, DropsSkinTones) {
+  EXPECT_EQ(stripped("\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD"), "\xF0\x9F\x91\x8D");  // 👍🏽 -> 👍
+  EXPECT_EQ(stripped("\xF0\x9F\x8F\xBB\xF0\x9F\x8F\xBF"), "");                  // bare modifiers 1F3FB, 1F3FF
+}
+
+TEST(Utf8StripEmojiModifiers, DropsJoinersLeavingMembersSideBySide) {
+  // 👨 ZWJ 👩 ZWJ 👧 -> 👨👩👧
+  EXPECT_EQ(stripped("\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"),
+            "\xF0\x9F\x91\xA8\xF0\x9F\x91\xA9\xF0\x9F\x91\xA7");
+}
+
+TEST(Utf8StripEmojiModifiers, KeycapBecomesItsDigit) {
+  EXPECT_EQ(stripped("1\xEF\xB8\x8F\xE2\x83\xA3"), "1");  // 1 + VS16 + keycap -> 1
+}
+
+// Other characters in the neighbouring ranges must survive: the arrow block next to
+// the keycap's block, and a different 3-byte lead (EF) that is not a selector.
+TEST(Utf8StripEmojiModifiers, DoesNotTouchLookalikeBytes) {
+  EXPECT_EQ(stripped("\xE2\x80\x93"), "\xE2\x80\x93");          // en dash U+2013
+  EXPECT_EQ(stripped("\xEF\xB8\x90"), "\xEF\xB8\x90");          // U+FE10, not a selector
+  EXPECT_EQ(stripped("\xF0\x9F\x8F\xBA"), "\xF0\x9F\x8F\xBA");  // U+1F3FA (trumpet-ish), below the modifier range
 }

@@ -3,6 +3,7 @@
 #ifdef ENABLE_BLE_NOTIFY_SPIKE
 
 #include "activities/Activity.h"
+#include "components/StatusBand.h"
 #include "util/ButtonNavigator.h"
 
 // Lists BleNotificationQueue's entries, most recent first (top to bottom --
@@ -16,21 +17,19 @@ class BleNotificationsActivity final : public Activity {
   // An extra stop bolted onto selectorIndex, the same idiom
   // PlannerScreenActivity's own headerFocused uses.
   bool headerFocused = false;
+  // The top of the screen -- status bar and today's calendar events (see StatusBand).
+  // The alert is left out: this screen is the list of them. While headerFocused,
+  // bandStop says which of the two has focus.
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
   // Set when a long-press has fired; input is swallowed until Confirm is
   // released again so the release doesn't also open the detail view Select
   // opens on a plain press -- same guard RecentBooksActivity uses for its own
   // long-press action.
   bool longPressFired = false;
-  // Side Up/Down jump to the previous/next app in the home grid's own order
-  // -- the same shortcut every other app screen has (see
-  // PlannerScreenActivity/QuickPickActivity's own identical block).
-  // Row-paging (buttonNavigator's onNext/onPreviousRelease) is still
-  // reachable via front Left1/Left2, which NavNext/NavPrevious alias to
-  // alongside side Up/Down -- see MappedInputManager::mapButton()'s own
-  // NavNext/NavPrevious case. Guarded by a fresh-press check the same way
-  // every other screen's is.
-  bool upPressSeen = false;
-  bool downPressSeen = false;
+  // Right1 can still be held down when this screen opens (a screen that opens it on the
+  // press, not the release): its release is not a request to leave, so it is dropped.
+  bool swallowBackRelease = false;
 
   void openDetail();
   void dismissAll();

@@ -7,6 +7,7 @@
 
 #include "RecentBooksStore.h"
 #include "activities/Activity.h"
+#include "components/StatusBand.h"
 #include "util/ButtonNavigator.h"
 
 class RecentBooksActivity final : public Activity {
@@ -17,6 +18,10 @@ class RecentBooksActivity final : public Activity {
   // An extra stop bolted onto selectorIndex, the same idiom
   // PlannerScreenActivity's own headerFocused uses.
   bool headerFocused = false;
+  // The top of the screen -- status bar, today's calendar events, the newest pending
+  // alert (see StatusBand). While headerFocused, bandStop says which of them has focus.
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
 
   // Set when a long-press has fired; input is swallowed until Confirm is released
   // again so the release doesn't also open the book.

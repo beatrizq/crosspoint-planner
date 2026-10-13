@@ -1,6 +1,7 @@
 #pragma once
 
 #include "activities/Activity.h"
+#include "components/StatusBand.h"
 #include "util/ButtonNavigator.h"
 
 /**
@@ -19,8 +20,17 @@
  * back to one bit (see drawScaledIcon() in the .cpp) rather than doubled pixel for
  * pixel, which would show every stair-step of the original.
  */
+// Which area of the app the user was last in -- what Home puts focus back on. The Read
+// menu and everything under it (Recent Books, the File Browser, the readers) are the
+// Reader; the Planner screen is the Planner. Kept in RAM only.
+enum class HomeArea : uint8_t { Reader, Planner };
+
 class MainMenuActivity final : public Activity {
  public:
+  // Called when the Read menu or the Planner screen opens (including through the side
+  // buttons, which skip the main menu), so that Home from anywhere in either lands on
+  // its own tile.
+  static void setReturnArea(const HomeArea area) { returnArea = area; }
   explicit MainMenuActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
       : Activity("MainMenu", renderer, mappedInput) {}
 
@@ -30,21 +40,31 @@ class MainMenuActivity final : public Activity {
   bool isHomeActivity() const override { return true; }
 
  private:
-  // The stops of the focus loop, in visual top-to-bottom order.
-  enum class Stop : uint8_t { StatusBar, Read, Planner };
-  static constexpr int STOP_COUNT = 3;
+  // The stops of the focus loop, in visual top-to-bottom order. Band is the whole
+  // top of the screen -- the status bar, today's calendar events and the newest
+  // pending alert, each its own stop (bandStop says which) -- then the two tiles.
+  enum class Stop : uint8_t { Band, Read, Planner };
+
+  inline static HomeArea returnArea = HomeArea::Reader;
 
   void activateFocused();
   // Geometry shared by render() and the touch hit-testing in loop(), so the two
-  // can never disagree about where a tile is.
+  // can never disagree about where a tile is. The two options are drawn as boxes (the
+  // selection outline's size, whether or not one is selected) with the same gap above
+  // the first, between them, and below the second, down to the front-button labels.
   struct TileLayout {
-    int top;     // y of the first tile's band
-    int height;  // each tile's band height; the second starts at top + height
+    int iconSize;      // edge of the (square) icon
+    int boxHeight;     // each option's box: icon, label and the padding around both
+    int gap;           // the equal gap above, between and below
+    int firstBoxTop;   // y of the first box's top edge
+    int secondBoxTop;  // y of the second box's top edge
   };
   TileLayout tileLayout() const;
 
   ButtonNavigator buttonNavigator;
   Stop focus = Stop::Read;
+  StatusBand band;
+  StatusBand::Stop bandStop = StatusBand::Stop::StatusBar;
   // Home can be entered while Right1 is still held (e.g. leaving Settings with
   // it): ignore that stale release until a fresh press is seen here.
   bool settingsPressSeen = false;

@@ -9,6 +9,7 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "activities/home/MainMenuActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/HomeAppOrder.h"
@@ -16,10 +17,15 @@
 
 void ReadMenuActivity::onEnter() {
   Activity::onEnter();
+  // Home from here (and from the screens under it) lands back on the Reader tile.
+  MainMenuActivity::setReturnArea(HomeArea::Reader);
+  swallowBackRelease = mappedInput.isPressed(MappedInputManager::Button::Right1);
   buildEntries();
   recentBooks = recentBookLoader::load(1);
   selectedIndex = 0;
   headerFocused = false;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.poll();
   requestUpdate();
 }
 
@@ -65,14 +71,35 @@ void ReadMenuActivity::activateSelected() {
 void ReadMenuActivity::loop() {
   const int itemCount = static_cast<int>(entries.size()) + 1;  // +1 for the leading card slot
 
+  // An alert arriving or being dismissed elsewhere, or a calendar event ending,
+  // changes what the band shows: repaint, and keep focus on a stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (headerFocused) bandStop = band.clamp(bandStop);
+
+  if (mappedInput.wasPressed(MappedInputManager::Button::Right1)) swallowBackRelease = false;
   if (mappedInput.wasReleased(MappedInputManager::Button::Right1)) {
+    if (swallowBackRelease) {
+      swallowBackRelease = false;
+      return;
+    }
+    // On the calendar rows or the alert, Right1 opens that screen; on the status
+    // bar (or anywhere else) it is Home, as always.
+    if (headerFocused && band.handleRight1(bandStop)) return;
     onGoHome(HomeMenuItem::READ_MENU);
     return;
   }
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (headerFocused) {
-      activityManager.goToSyncAll([] { activityManager.goToReadMenu(); });
+      if (bandStop == StatusBand::Stop::StatusBar) {
+        activityManager.goToSyncAll([] { activityManager.goToReadMenu(); });
+        return;
+      }
+      // Dismisses the alert (the next-newest takes its place); nothing to do on
+      // the calendar rows.
+      band.handleRight2(bandStop);
+      bandStop = band.clamp(bandStop);
+      requestUpdate();
       return;
     }
     activateSelected();
@@ -109,7 +136,7 @@ void ReadMenuActivity::loop() {
   }
 
   const auto& metrics = UITheme::getInstance().getMetrics();
-  int listTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  int listTop = band.bottom(renderer) + metrics.verticalSpacing;
 
   // Checked ahead of the regular row touch zone below, which starts only
   // after this one -- same idea as HomeActivity's own companion-vs-cover
@@ -172,10 +199,14 @@ void ReadMenuActivity::loop() {
 
   buttonNavigator.onNext([this, itemCount] {
     if (headerFocused) {
-      headerFocused = false;
-      selectedIndex = 0;
+      // Down through the band's stops, then into the list.
+      if (!band.step(bandStop, /*forward=*/true)) {
+        headerFocused = false;
+        selectedIndex = 0;
+      }
     } else if (selectedIndex == itemCount - 1) {
       headerFocused = true;
+      bandStop = band.first();
     } else {
       selectedIndex = ButtonNavigator::nextIndex(selectedIndex, itemCount);
     }
@@ -184,10 +215,14 @@ void ReadMenuActivity::loop() {
 
   buttonNavigator.onPrevious([this, itemCount] {
     if (headerFocused) {
-      headerFocused = false;
-      selectedIndex = itemCount - 1;
+      // Up through the band's stops, then wrap to the end of the list.
+      if (!band.step(bandStop, /*forward=*/false)) {
+        headerFocused = false;
+        selectedIndex = itemCount - 1;
+      }
     } else if (selectedIndex == 0) {
       headerFocused = true;
+      bandStop = band.last();
     } else {
       selectedIndex = ButtonNavigator::previousIndex(selectedIndex, itemCount);
     }
@@ -202,16 +237,11 @@ void ReadMenuActivity::render(RenderLock&&) {
   const auto pageWidth = renderer.getScreenWidth();
   const auto pageHeight = renderer.getScreenHeight();
 
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, tr(STR_MENU_READER), nullptr);
-  // Hovering the header (see headerFocused's own comment): a true pixel
-  // invert, the same technique QuickPickActivity's own header focus uses.
-  if (headerFocused) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width,
-                        std::min(HEADER_FOCUS_HIGHLIGHT_HEIGHT, headerRect.height));
-  }
+  if (headerFocused) bandStop = band.clamp(bandStop);
+  const int headerBottom =
+      band.drawTitled(renderer, tr(STR_MENU_READER), nullptr, headerFocused ? bandStop : StatusBand::Stop::None);
 
-  int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  int contentTop = headerBottom + metrics.verticalSpacing;
 
   // The same per-theme card Home used to draw at the top of its own screen
   // (see LyraTheme/BaseTheme/RoundedRaffTheme's drawRecentBookCover()) --
@@ -238,8 +268,9 @@ void ReadMenuActivity::render(RenderLock&&) {
 
   // Back always calls onGoHome() (see this file's own Back handler) rather
   // than returning to a caller, so the hint says Home, not Back.
-  const auto labels = mappedInput.mapLabels(tr(STR_HOME), headerFocused ? tr(STR_SYNC_ALL) : tr(STR_SELECT),
-                                            tr(STR_DIR_UP), tr(STR_DIR_DOWN));
+  const auto labels = mappedInput.mapLabels(headerFocused ? band.right1Label(bandStop) : tr(STR_HOME),
+                                            headerFocused ? band.right2Label(bandStop) : tr(STR_SELECT), tr(STR_DIR_UP),
+                                            tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
 
   renderer.displayBuffer();

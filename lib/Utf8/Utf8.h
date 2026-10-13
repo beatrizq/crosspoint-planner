@@ -12,6 +12,14 @@ size_t utf8RemoveLastChar(std::string& str);
 // Truncate string by removing N UTF-8 codepoints from the end.
 void utf8TruncateChars(std::string& str, size_t numChars);
 
+// Removes, in place, the invisible parts of emoji sequences that the device's emoji
+// font has no glyph for: variation selectors U+FE0E/U+FE0F, the zero-width joiner
+// U+200D, the combining keycap U+20E3 and the skin-tone modifiers U+1F3FB-U+1F3FF.
+// A sequence is left as its base emoji (a family becomes its members side by
+// side, a thumbs-up with a skin tone a plain thumbs-up). The string only ever
+// shrinks, so this is safe on a buffer of any size.
+void utf8StripEmojiModifiers(char* text);
+
 // Canonical composition (NFC) for the Latin / Vietnamese range: precomposes a
 // base letter followed by combining diacritical mark(s) into a single codepoint.
 // Needed because the device fonts have no combining-mark positioning, so text

@@ -80,6 +80,9 @@ void FileBrowserActivity::onEnter() {
 
   selectorIndex = 0;
   headerFocused = false;
+  bandStop = StatusBand::Stop::StatusBar;
+  band.setEnabled(mode == Mode::Books);
+  band.poll();
 
   // If Confirm was held while this activity opened (typical when launched from a menu), ignore
   // its release — otherwise we'd immediately auto-open whatever is at index 0.
@@ -210,12 +213,19 @@ void FileBrowserActivity::loop() {
     return;
   }
 
+  // An alert arriving or being dismissed elsewhere, or a calendar event ending, changes
+  // what the band shows: repaint, and keep focus on a stop that still exists.
+  if (band.poll()) requestUpdate();
+  if (headerFocused) bandStop = band.clamp(bandStop);
+
   const int pathReserved = renderer.getLineHeight(SMALL_FONT_ID) + UITheme::getInstance().getMetrics().verticalSpacing;
-  const int pageItems = UITheme::getNumberOfItemsPerPage(renderer, true, false, true, false, pathReserved);
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentTop = band.bottom(renderer) + metrics.verticalSpacing;
   const int contentHeight =
       renderer.getScreenHeight() - contentTop - metrics.buttonHintsHeight - metrics.buttonHintsGap - pathReserved;
+  // From the room the list really has (the band can have pushed it down), not the
+  // theme's assumption of a plain header.
+  const int pageItems = GUI.getListPageItems(contentHeight, false);
 
   auto activateSelected = [this] {
     if (lockNextConfirmRelease) {
@@ -301,6 +311,14 @@ void FileBrowserActivity::loop() {
 
   if (mappedInput.wasReleased(MappedInputManager::Button::Right2)) {
     if (mode == Mode::Books && headerFocused) {
+      if (bandStop != StatusBand::Stop::StatusBar) {
+        // Dismisses the alert (the next-newest takes its place); nothing to do on
+        // the calendar rows.
+        band.handleRight2(bandStop);
+        bandStop = band.clamp(bandStop);
+        requestUpdate();
+        return;
+      }
       // Captured by value: this screen is destroyed the instant
       // goToSyncAll()'s own replaceActivity() call runs.
       activityManager.goToSyncAll(
@@ -315,6 +333,8 @@ void FileBrowserActivity::loop() {
     // Short press: go up one directory, or go home if at root -- or, with the
     // status bar focused, always home (labelled "« Home", see the hints below).
     if (mappedInput.getHeldTime() < GO_HOME_MS) {
+      // On the calendar rows or the alert, Right1 opens that screen.
+      if (mode == Mode::Books && headerFocused && band.handleRight1(bandStop)) return;
       if (mode == Mode::Books && headerFocused) {
         onGoHome();
       } else if (basepath != "/") {
@@ -363,10 +383,14 @@ void FileBrowserActivity::loop() {
 
   buttonNavigator.onNextRelease([this, listSize] {
     if (headerFocused) {
-      headerFocused = false;
-      selectorIndex = 0;
+      // Down through the band's stops, then into the list.
+      if (!band.step(bandStop, /*forward=*/true)) {
+        headerFocused = false;
+        selectorIndex = 0;
+      }
     } else if (mode == Mode::Books && static_cast<int>(selectorIndex) == listSize - 1) {
       headerFocused = true;
+      bandStop = band.first();
     } else {
       selectorIndex = ButtonNavigator::nextIndex(static_cast<int>(selectorIndex), listSize);
     }
@@ -375,10 +399,14 @@ void FileBrowserActivity::loop() {
 
   buttonNavigator.onPreviousRelease([this, listSize] {
     if (headerFocused) {
-      headerFocused = false;
-      selectorIndex = listSize > 0 ? static_cast<size_t>(listSize - 1) : 0;
+      // Up through the band's stops, then wrap to the end of the list.
+      if (!band.step(bandStop, /*forward=*/false)) {
+        headerFocused = false;
+        selectorIndex = listSize > 0 ? static_cast<size_t>(listSize - 1) : 0;
+      }
     } else if (mode == Mode::Books && selectorIndex == 0) {
       headerFocused = true;
+      bandStop = band.last();
     } else {
       selectorIndex = ButtonNavigator::previousIndex(static_cast<int>(selectorIndex), listSize);
     }
@@ -429,18 +457,13 @@ void FileBrowserActivity::render(RenderLock&&) {
                            : (mode == Mode::PickImage)  ? std::string(tr(STR_SELECT_IMAGE_FILE))
                                                         : ((basepath == "/") ? std::string(tr(STR_SD_CARD))
                                                                              : basepath.substr(basepath.rfind('/') + 1));
-  const Rect headerRect{0, metrics.topPadding, pageWidth, metrics.headerHeight};
-  GUI.drawHeader(renderer, headerRect, folderName.c_str());
-  // Hovering the header (see headerFocused's own comment): a true pixel
-  // invert, the same technique QuickPickActivity's own header focus uses.
-  if (mode == Mode::Books && headerFocused) {
-    renderer.invertRect(headerRect.x, headerRect.y, headerRect.width,
-                        std::min(HEADER_FOCUS_HIGHLIGHT_HEIGHT, headerRect.height));
-  }
+  if (headerFocused) bandStop = band.clamp(bandStop);
+  const int headerBottom = band.drawTitled(renderer, folderName.c_str(), nullptr,
+                                           (mode == Mode::Books && headerFocused) ? bandStop : StatusBand::Stop::None);
 
   const int pathLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
   const int pathReserved = pathLineHeight + metrics.verticalSpacing;
-  const int contentTop = metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
+  const int contentTop = headerBottom + metrics.verticalSpacing;
   const int contentHeight = pageHeight - contentTop - metrics.buttonHintsHeight - metrics.buttonHintsGap - pathReserved;
   if (files.empty()) {
     const char* emptyMsg = (mode == Mode::PickFirmware) ? tr(STR_NO_BIN_FILES) : tr(STR_NO_FILES_FOUND);
@@ -482,7 +505,7 @@ void FileBrowserActivity::render(RenderLock&&) {
 
   // Help text
   const bool cancelsToCallerAtRoot = mode == Mode::PickFirmware || mode == Mode::PickImage;
-  const char* backLabel = (mode == Mode::Books && headerFocused) ? tr(STR_HOME)
+  const char* backLabel = (mode == Mode::Books && headerFocused) ? band.right1Label(bandStop)
                           : (basepath == "/")
                               ? ((cancelsToCallerAtRoot || returnToReadMenu) ? tr(STR_BACK) : tr(STR_HOME))
                               : tr(STR_BACK);
@@ -491,7 +514,7 @@ void FileBrowserActivity::render(RenderLock&&) {
   // STR_OPEN there.
   const bool selectingReturnableFile = cancelsToCallerAtRoot && !files.empty() && files[selectorIndex].back() != '/';
   const char* confirmLabel = (mode == Mode::Books && headerFocused)
-                                 ? tr(STR_SYNC_ALL)
+                                 ? band.right2Label(bandStop)
                                  : (files.empty() ? "" : (selectingReturnableFile ? tr(STR_SELECT) : tr(STR_OPEN)));
   const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, files.empty() ? "" : tr(STR_DIR_UP),
                                             files.empty() ? "" : tr(STR_DIR_DOWN));
