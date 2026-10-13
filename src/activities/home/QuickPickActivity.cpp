@@ -71,6 +71,9 @@ constexpr int SECTION_TITLE_PAD = 14;
 // either side of the text, and the corner radius.
 constexpr int PROJECT_PILL_PADDING = 8;
 constexpr int PROJECT_PILL_RADIUS = 6;
+// The selected project while the row lacks focus: its name underlined, as LyraTheme::drawTabBar() does a
+// selected tab (its selectionLineWidth, file-local there).
+constexpr int PROJECT_UNDERLINE_WIDTH = 2;
 
 // onEnter() lands focus on the title row's first entry, where Right1 means "go Home".
 // A reflexive second press of the same physical button right after arriving -- e.g.
@@ -109,13 +112,12 @@ void dimText(const GfxRenderer& renderer, const int x, const int y, const int fo
   dimText(renderer, x, y, fontId, text);
 }
 
-// The Tasks section's title row: every entry on one line, the selected one in
-// bold and the rest regular (while the row has focus, the selected one is
-// regular too, inside its pill, like a selected tab). Each entry sits in a slot of its text plus
+// The Tasks section's title row: every entry on one line in regular weight, the
+// selected one marked the way the tab bar marks its selected tab -- a solid black
+// rounded pill with white text while the row has focus, its name underlined while
+// focus is elsewhere. Each entry sits in a slot of its text plus
 // PROJECT_PILL_PADDING either side, with `gap` between slots -- the same layout
-// the tab bar uses, so the selected entry's pill (drawn only while the row has
-// focus, the same rounded shape LyraTheme::drawTabBar() gives its selected tab,
-// solid black with white text) fits its slot and the text never moves between the
+// the tab bar uses, so the pill fits its slot and the text never moves between the
 // focused and unfocused states. When the slots do not all fit, the row scrolls
 // just far enough to keep the selected one fully on screen (the ones that still
 // do not fit after it are simply not drawn), and a selected entry wider than the
@@ -129,9 +131,7 @@ void drawProjectTitleRow(const GfxRenderer& renderer, const int textY, const int
   const int left = sidePadding;
   const int available = width - left * 2;
   const auto slotWidthOf = [&](const size_t i) {
-    return renderer.getTextWidth(UI_12_FONT_ID, names[i],
-                                 i == selected ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR) +
-           2 * PROJECT_PILL_PADDING;
+    return renderer.getTextWidth(UI_12_FONT_ID, names[i], EpdFontFamily::REGULAR) + 2 * PROJECT_PILL_PADDING;
   };
 
   size_t first = 0;
@@ -146,10 +146,7 @@ void drawProjectTitleRow(const GfxRenderer& renderer, const int textY, const int
   for (size_t i = first; i < names.size(); i++) {
     const bool isSelected = i == selected;
     const bool pill = isSelected && focused;
-    // Bold marks the selection while the row is unfocused; inside the pill the
-    // text is regular weight, like a selected tab's. The slot is sized for the
-    // bold text either way, so the regular text is centred in it.
-    const auto style = (isSelected && !focused) ? EpdFontFamily::BOLD : EpdFontFamily::REGULAR;
+    const auto style = EpdFontFamily::REGULAR;
     const int slotWidth = slotWidthOf(i);
     if (x + slotWidth > left + available) {
       if (i == first) {
@@ -163,7 +160,12 @@ void drawProjectTitleRow(const GfxRenderer& renderer, const int textY, const int
     }
     if (pill) renderer.fillRoundedRect(x, pillY, slotWidth, pillHeight, PROJECT_PILL_RADIUS, Color::Black);
     const int drawnWidth = renderer.getTextWidth(UI_12_FONT_ID, names[i], style);
-    renderer.drawText(UI_12_FONT_ID, x + (slotWidth - drawnWidth) / 2, textY, names[i], !pill, style);
+    const int drawnX = x + (slotWidth - drawnWidth) / 2;
+    renderer.drawText(UI_12_FONT_ID, drawnX, textY, names[i], !pill, style);
+    if (isSelected && !focused) {
+      const int underlineY = std::min(textY + renderer.getLineHeight(UI_12_FONT_ID) - 2, pillY + pillHeight - 3);
+      renderer.fillRect(drawnX, underlineY, drawnWidth, PROJECT_UNDERLINE_WIDTH);
+    }
     x += slotWidth + gap;
   }
 }
